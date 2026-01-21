@@ -350,20 +350,15 @@
   async function clearMyPendingInvites(){
     if (!me) return;
     try {
+      // Rules allow delete only for invites you sent.
       const qFrom = query(
         collection(fs, "gameInvites"),
         where("fromUid", "==", me.uid),
         where("status", "==", "pending")
       );
-      const qTo = query(
-        collection(fs, "gameInvites"),
-        where("toUid", "==", me.uid),
-        where("status", "==", "pending")
-      );
-      const [snapFrom, snapTo] = await Promise.all([getDocs(qFrom), getDocs(qTo)]);
+      const snapFrom = await getDocs(qFrom);
       const deletes = [];
       snapFrom.forEach((d) => deletes.push(deleteDoc(d.ref)));
-      snapTo.forEach((d) => deletes.push(deleteDoc(d.ref)));
       await Promise.all(deletes);
     } catch (e) {
       console.error("[Invite cleanup]", e);
