@@ -95,7 +95,7 @@
           </div>
           <button id="startOnline">Start Online</button>
         </div>
-        <div class="muted" style="margin-top:10px;">
+        <div class="muted" style="margin-top:10px;" id="onlineHint">
           Online mode requires sign-in.
         </div>
       </div>
@@ -124,7 +124,7 @@
             <div style="font-weight:700;">Online Lobby</div>
             <div class="muted">Friends online</div>
           </div>
-          <span class="badge ok" id="presenceBadge">Offline</span>
+          <span class="badge err" id="presenceBadge">Offline</span>
         </div>
 
         <div style="margin-top:10px;">
@@ -179,24 +179,21 @@
         </div>
       </div>
     </div>
-
   </div>
 
-<script>
-  window.xoAppInitialized = false;
-</script>
-
 <script type="module">
-  window.xoAppInitialized = true;
-  // Firebase v10+ modules
+  // Firebase v10+ modules (Auth + Firestore + RTDB presence)
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import {
     getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
   import {
-    getDatabase, ref, set, get, update, push, onValue, onChildAdded, onChildChanged,
-    remove, serverTimestamp, onDisconnect, off
+    getDatabase, ref, set, get, update, onValue, serverTimestamp, onDisconnect
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-database.js";
+  import {
+    getFirestore, doc, setDoc, getDoc, updateDoc, deleteDoc,
+    collection, onSnapshot, query, where, serverTimestamp as fsTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
   // TODO: Replace with your Firebase config
   const firebaseConfig = {
@@ -207,20 +204,7 @@
     appId: "YOUR_APP_ID"
   };
 
-  let app = null;
-  let auth = null;
-  let db = null;
-  let firebaseEnabled = true;
-  try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getDatabase(app);
-  } catch (e) {
-    firebaseEnabled = false;
-    console.warn("[Firebase disabled]", e);
-  }
-
-  // ---------- UI helpers ----------
+  // ---------- init ----------
   const $ = (id) => document.getElementById(id);
   const views = {
     menu: $("viewMenu"),
@@ -233,16 +217,22 @@
     views[name].classList.remove("hidden");
     $("btnBack").disabled = (name === "menu");
   }
-
   function setStatus(text){ $("statusLine").textContent = text; }
 
-  // ---------- Offline game ----------
-  const offline = {
-    board: Array(9).fill(""),
-    turn: "X",
-    ended: false
-  };
+  function escapeHtml(s){
+    return (s||"").replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
 
+  function chatIdFor(a, b){
+    return (a < b) ? (a + "_" + b) : (b + "_" + a);
+  }
+  function newRoomId(){
+    return "room_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+
+  // ---------- winner ----------
   function winnerOf(board){
     const lines = [
       [0,1,2],[3,4,5],[6,7,8],
@@ -256,22 +246,24 @@
     return "";
   }
 
-  function renderOffline(){
-    $("offlineTurn").textContent = offline.ended ? "Game Over" : `Turn: ${offline.turn}`;
-    const win = winnerOf(offline.board);
-    $("offlineMsg").textContent =
-      win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
-  }
-
+  // ---------- board builder ----------
   function buildBoard(container, onClick){
     container.innerHTML = "";
     for (let i=0;i<9;i++){
       const d = document.createElement("div");
       d.className = "cell";
-      d.dataset.i = String(i);
       d.addEventListener("click", () => onClick(i));
       container.appendChild(d);
     }
+  }
+
+  // ---------- Offline game ----------
+  const offline = { board: Array(9).fill(""), turn: "X", ended: false };
+
+  function renderOffline(){
+    $("offlineTurn").textContent = offline.ended ? "Game Over" : `Turn: ${offline.turn}`;
+    const win = winnerOf(offline.board);
+    $("offlineMsg").textContent = win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
   }
 
   buildBoard($("offlineBoard"), (i) => {
@@ -281,7 +273,6 @@
     const win = winnerOf(offline.board);
     if (win) offline.ended = true;
     offline.turn = offline.turn === "X" ? "O" : "X";
-    // paint
     [...$("offlineBoard").children].forEach((c, idx) => c.textContent = offline.board[idx]);
     renderOffline();
   });
@@ -294,16 +285,20 @@
     renderOffline();
   });
 
-  // ---------- Online state ----------
-  let me = null;              // { uid, name }
-  let currentRoomId = null;
-  let roomUnsubs = [];        // store off() callbacks references
-
-  function randomRoomId(){
-    // push().key gives nice unique IDs; we use that.
-    return push(ref(db, "rooms")).key;
+  // ---------- Firebase enable guard ----------
+  let app, auth, db, fs;
+  let firebaseEnabled = true;
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getDatabase(app);     // RTDB presence only
+    fs = getFirestore(app);    // Firestore: friends + invites + rooms
+  } catch (e) {
+    firebaseEnabled = false;
+    console.warn("[Firebase disabled]", e);
   }
 
+  // ---------- Presence (RTDB) ----------
   async function writePresenceOnline(uid, name){
     const statusRef = ref(db, `status/${uid}`);
     const connRef = ref(db, ".info/connected");
@@ -311,59 +306,90 @@
     onValue(connRef, async (snap) => {
       if (snap.val() !== true) return;
 
-      // onDisconnect fires when client disconnects (tab closed, network lost).
       await onDisconnect(statusRef).set({
         online: false,
         name: name || "Player",
         lastSeen: serverTimestamp()
       });
 
-      // set online now
       await set(statusRef, {
         online: true,
         name: name || "Player",
         lastSeen: serverTimestamp()
       });
+
+      $("presenceBadge").textContent = "Online";
+      $("presenceBadge").className = "badge ok";
     });
   }
 
-  async function loadMyName(uid){
+  async function loadMyNameFromPresence(uid){
     const s = await get(ref(db, `status/${uid}/name`));
     return s.exists() ? s.val() : "";
   }
 
-  // Render friends list from /friends/{me}/... and show only those who are online
+  // ---------- Online state ----------
+  let me = null;              // { uid, name }
+  let currentRoomId = null;
+
+  // Unsub holders
+  let friendsUnsub = null;
+  let invitesUnsub = null;
+  let inviteWatchUnsub = null;
+  let roomUnsub = null;
+
+  function cleanupOnlineSubs(){
+    if (friendsUnsub) friendsUnsub(), friendsUnsub = null;
+    if (invitesUnsub) invitesUnsub(), invitesUnsub = null;
+    if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
+    if (roomUnsub) roomUnsub(), roomUnsub = null;
+  }
+
+  // ---------- Friends list (Firestore) + presence (RTDB) ----------
   async function subscribeFriends(){
     const listEl = $("friendsList");
     listEl.innerHTML = `<div class="muted">Loading friends…</div>`;
 
-    const friendsRef = ref(db, `friends/${me.uid}`);
-    onValue(friendsRef, async (snap) => {
-      const friendsObj = snap.val() || {};
-      const friendUids = Object.keys(friendsObj);
+    if (friendsUnsub) friendsUnsub();
+
+    const friendsCol = collection(fs, "users", me.uid, "friends");
+    friendsUnsub = onSnapshot(friendsCol, async (snap) => {
+      const friendUids = snap.docs.map(d => d.id);
+
       if (!friendUids.length){
-        listEl.innerHTML = `<div class="muted">No friends added yet. Add UIDs under friends/${me.uid}/ in the database.</div>`;
+        listEl.innerHTML = `<div class="muted">No friends found in Firestore users/${me.uid}/friends</div>`;
         return;
       }
 
-      // fetch each friend's status
       const rows = [];
       for (const fuid of friendUids){
+        // Optional profile read (nice names)
+        let nameFromFs = "";
+        const prof = await getDoc(doc(fs, "users", fuid));
+        if (prof.exists()){
+          const d = prof.data();
+          nameFromFs = d.displayName || d.name || "";
+        }
+
+        // RTDB presence
         const st = await get(ref(db, `status/${fuid}`));
         const val = st.val();
         const online = !!(val && val.online);
-        rows.push({ uid: fuid, name: val?.name || fuid.slice(0,6), online });
+
+        rows.push({ uid: fuid, name: nameFromFs || val?.name || fuid.slice(0,6), online });
       }
 
-      // build UI
       listEl.innerHTML = "";
       rows.sort((a,b) => Number(b.online)-Number(a.online) || a.name.localeCompare(b.name));
+
       for (const r of rows){
         const item = document.createElement("div");
         item.className = "item";
+
         const left = document.createElement("div");
         left.innerHTML = `<div style="font-weight:700;">${escapeHtml(r.name)}</div>
                           <div class="muted">${r.uid}</div>`;
+
         const right = document.createElement("div");
         right.className = "twoBtns";
 
@@ -374,7 +400,7 @@
         const btn = document.createElement("button");
         btn.textContent = "Invite";
         btn.disabled = !r.online || !!currentRoomId;
-        btn.addEventListener("click", () => sendInvite(r.uid, r.name));
+        btn.addEventListener("click", () => sendInviteFs(r.uid, r.name));
 
         right.appendChild(badge);
         right.appendChild(btn);
@@ -386,61 +412,47 @@
     });
   }
 
-  function escapeHtml(s){
-    return (s||"").replace(/[&<>"']/g, (c) => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    }[c]));
-  }
-
-  async function sendInvite(toUid, toName){
-    if (!me) return;
-    const roomId = randomRoomId();
-    const inviteRef = push(ref(db, `invites/${toUid}`));
-    await set(inviteRef, {
-      fromUid: me.uid,
-      fromName: me.name || "Player",
-      status: "pending",
-      roomId,
-      createdAt: Date.now()
-    });
-    alert(`Invite sent to ${toName}.`);
-  }
-
+  // ---------- Invites (Firestore) ----------
   function subscribeInvites(){
     const listEl = $("invitesList");
     listEl.innerHTML = `<div class="muted">Waiting for invites…</div>`;
 
-    const invRef = ref(db, `invites/${me.uid}`);
+    if (invitesUnsub) invitesUnsub();
 
-    // live updates
-    onValue(invRef, (snap) => {
-      const obj = snap.val() || {};
-      const invites = Object.entries(obj).map(([id, v]) => ({ id, ...v }))
-        .filter(x => x.status === "pending")
-        .sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+    const qInv = query(
+      collection(fs, "gameInvites"),
+      where("toUid", "==", me.uid),
+      where("status", "==", "pending")
+    );
 
-      if (!invites.length){
+    invitesUnsub = onSnapshot(qInv, (snap) => {
+      if (snap.empty){
         listEl.innerHTML = `<div class="muted">No incoming invites.</div>`;
         return;
       }
+
+      const invites = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
 
       listEl.innerHTML = "";
       for (const inv of invites){
         const item = document.createElement("div");
         item.className = "item";
+
         const left = document.createElement("div");
         left.innerHTML = `<div style="font-weight:700;">${escapeHtml(inv.fromName || "Friend")}</div>
                           <div class="muted">${inv.fromUid}</div>`;
+
         const right = document.createElement("div");
         right.className = "twoBtns";
 
         const accept = document.createElement("button");
         accept.textContent = "Accept";
-        accept.addEventListener("click", () => acceptInvite(inv));
+        accept.addEventListener("click", () => acceptInviteFs(inv.id, inv));
 
         const reject = document.createElement("button");
         reject.textContent = "Reject";
-        reject.addEventListener("click", () => rejectInvite(inv));
+        reject.addEventListener("click", () => rejectInviteFs(inv.id));
 
         right.appendChild(accept);
         right.appendChild(reject);
@@ -452,112 +464,102 @@
     });
   }
 
-  async function acceptInvite(inv){
-    // mark invite accepted
-    await update(ref(db, `invites/${me.uid}/${inv.id}`), { status: "accepted" });
-
-    // create room as the acceptor (host sets room state)
-    // We'll assign: inviter = X, acceptor = O (simple rule)
-    const roomId = inv.roomId;
-    const roomRef = ref(db, `rooms/${roomId}`);
-
-    const room = {
-      status: "playing",
-      board: Array(9).fill(""),
-      turn: "X",
-      winner: "",
-      lastMoveAt: Date.now(),
-      players: { X: inv.fromUid, O: me.uid },
-      names: {
-        [inv.fromUid]: inv.fromName || "Player X",
-        [me.uid]: me.name || "Player O"
-      }
-    };
-
-    await set(roomRef, room);
-
-    // notify inviter by writing invite result back for them (optional)
-    // simplest: inviter watches sent invite by ID? Not stored. So we rely on room existence.
-    // Move both into room view:
-    joinRoom(roomId);
-  }
-
-  async function rejectInvite(inv){
-    await update(ref(db, `invites/${me.uid}/${inv.id}`), { status: "rejected" });
-  }
-
-  // inviter side: after sending invite, they don't know acceptance yet.
-  // simplest rule: inviter can "poll" roomId existence (or you can store sent invites under /sentInvites/{from}/)
-  // We'll implement: when online lobby opens, we listen for rooms where I'm a player (light approach is hard).
-  // For now: if you sent invite, tell your friend to accept; inviter can also accept by entering room when created.
-  // We'll implement quick helper: "watch for rooms created with me as X or O" is not index-friendly; keep it simple:
-  // When you send invite, store the roomId locally and wait until /rooms/roomId appears.
-  let pendingRoomWatch = null;
-
-  async function watchRoomCreation(roomId){
-    if (pendingRoomWatch) pendingRoomWatch();
-    const roomRef = ref(db, `rooms/${roomId}`);
-    const cb = onValue(roomRef, (snap) => {
-      if (snap.exists() && snap.val().status === "playing"){
-        // room created by acceptor -> join
-        if (pendingRoomWatch) pendingRoomWatch();
-        joinRoom(roomId);
-      }
-    });
-    pendingRoomWatch = () => off(roomRef, "value", cb);
-    alert("Waiting for friend to accept… Keep this page open.");
-  }
-
-  // Modify sendInvite to also wait:
-  async function sendInvite(toUid, toName){
+  async function sendInviteFs(toUid, toName){
     if (!me) return;
-    const roomId = randomRoomId();
-    const inviteRef = push(ref(db, `invites/${toUid}`));
-    await set(inviteRef, {
+
+    const inviteId = chatIdFor(me.uid, toUid);
+    const inviteRef = doc(fs, "gameInvites", inviteId);
+
+    const roomId = newRoomId();
+    await setDoc(inviteRef, {
       fromUid: me.uid,
+      toUid,
       fromName: me.name || "Player",
       status: "pending",
       roomId,
-      createdAt: Date.now()
+      createdAt: fsTimestamp(),
+      updatedAt: fsTimestamp()
     });
-    await watchRoomCreation(roomId);
-    // Note: if rejected, inviter won’t see it in this simplified model.
-    // Production version should also write /sentInvites/{fromUid}/{inviteId}.
+
+    alert(`Invite sent to ${toName}. Waiting for accept…`);
+    watchInviteResult(inviteId);
   }
 
-  // ---------- Room logic ----------
-  function clearRoomSubscriptions(){
-    for (const u of roomUnsubs) u();
-    roomUnsubs = [];
+  function watchInviteResult(inviteId){
+    if (inviteWatchUnsub) inviteWatchUnsub();
+
+    const inviteRef = doc(fs, "gameInvites", inviteId);
+    inviteWatchUnsub = onSnapshot(inviteRef, (snap) => {
+      if (!snap.exists()) return;
+      const inv = snap.data();
+
+      if (inv.status === "accepted" && inv.roomId){
+        if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
+        joinRoomFs(inv.roomId);
+      } else if (inv.status === "rejected"){
+        if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
+        alert("Invite rejected.");
+      } else if (inv.status === "cancelled"){
+        if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
+        alert("Invite cancelled.");
+      }
+    });
   }
 
-  function subscribe(refPath, event, handler){
-    const r = ref(db, refPath);
-    if (event === "value"){
-      const cb = onValue(r, handler);
-      roomUnsubs.push(() => off(r, "value", cb));
-    }
+  async function acceptInviteFs(inviteId, inv){
+    const roomId = inv.roomId;
+    const roomRef = doc(fs, "gameRooms", roomId);
+
+    await setDoc(roomRef, {
+      members: [inv.fromUid, me.uid],
+      players: { X: inv.fromUid, O: me.uid },
+      names: { [inv.fromUid]: inv.fromName || "Player X", [me.uid]: me.name || "Player O" },
+
+      board: Array(9).fill(""),
+      turn: "X",
+      status: "playing",
+      winner: "",
+      endedReason: "",
+
+      createdAt: fsTimestamp(),
+      updatedAt: fsTimestamp()
+    });
+
+    await updateDoc(doc(fs, "gameInvites", inviteId), {
+      status: "accepted",
+      updatedAt: fsTimestamp()
+    });
+
+    joinRoomFs(roomId);
   }
 
-  async function joinRoom(roomId){
+  async function rejectInviteFs(inviteId){
+    await updateDoc(doc(fs, "gameInvites", inviteId), {
+      status: "rejected",
+      updatedAt: fsTimestamp()
+    });
+  }
+
+  // ---------- Room (Firestore realtime) ----------
+  async function joinRoomFs(roomId){
     currentRoomId = roomId;
     showView("room");
     $("roomLine").textContent = `Room: ${roomId}`;
     $("btnRematch").disabled = true;
     $("matchMsg").textContent = "";
 
-    clearRoomSubscriptions();
+    if (roomUnsub) roomUnsub();
 
-    const roomRefPath = `rooms/${roomId}`;
+    const roomRef = doc(fs, "gameRooms", roomId);
 
-    subscribe(roomRefPath, "value", async (snap) => {
+    roomUnsub = onSnapshot(roomRef, async (snap) => {
       if (!snap.exists()){
         $("matchMsg").textContent = "Room ended.";
         $("btnRematch").disabled = true;
         return;
       }
 
-      const room = snap.val();
+      const room = snap.data();
       const board = room.board || Array(9).fill("");
       const turn = room.turn || "X";
       const winner = room.winner || "";
@@ -565,7 +567,6 @@
       const players = room.players || {};
       const names = room.names || {};
 
-      // Identify my symbol
       const mySymbol = (players.X === me.uid) ? "X" : (players.O === me.uid ? "O" : "");
       const oppUid = (mySymbol === "X") ? players.O : players.X;
 
@@ -575,118 +576,124 @@
         winner ? `${winner} wins.` :
         `Turn: ${turn} — You are ${mySymbol || "?"}`;
 
-      // Render board
       [...$("onlineBoard").children].forEach((c, idx) => c.textContent = board[idx] || "");
 
-      // Players panel
       $("pX").textContent = `X: ${names[players.X] || players.X || "—"}`;
       $("pO").textContent = `O: ${names[players.O] || players.O || "—"}`;
 
-      // Check opponent presence
+      // Presence check (RTDB)
       if (oppUid){
         const oppSnap = await get(ref(db, `status/${oppUid}`));
         const oppOnline = !!(oppSnap.val() && oppSnap.val().online);
+
         $("pXb").textContent = (players.X === me.uid ? "You" : (oppOnline ? "Online" : "Offline"));
         $("pOb").textContent = (players.O === me.uid ? "You" : (oppOnline ? "Online" : "Offline"));
 
-        // If opponent offline and match still playing => end it
         if (!oppOnline && status === "playing"){
-          await update(ref(db, roomRefPath), {
+          await updateDoc(roomRef, {
             status: "ended",
             winner: "",
-            endedReason: `Opponent disconnected`,
-            endedAt: Date.now()
+            endedReason: `${names[oppUid] || "Friend"} disconnected`,
+            updatedAt: fsTimestamp()
           });
           $("matchMsg").textContent = `${names[oppUid] || "Friend"} disconnected.`;
         }
       }
 
-      // Enable rematch button if ended
       $("btnRematch").disabled = (status !== "ended");
     });
-
-    // Build board clicks (only once)
-    if (!$("onlineBoard").children.length){
-      buildBoard($("onlineBoard"), (i) => tryMove(i));
-    }
   }
 
-  async function tryMove(i){
+  async function tryMoveFs(i){
     if (!currentRoomId || !me) return;
-    const roomPath = `rooms/${currentRoomId}`;
-    const snap = await get(ref(db, roomPath));
+
+    const roomRef = doc(fs, "gameRooms", currentRoomId);
+    const snap = await getDoc(roomRef);
     if (!snap.exists()) return;
 
-    const room = snap.val();
+    const room = snap.data();
     if (room.status !== "playing") return;
 
     const players = room.players || {};
     const mySymbol = (players.X === me.uid) ? "X" : (players.O === me.uid ? "O" : "");
     if (!mySymbol) return;
-
     if (room.turn !== mySymbol) return;
+
     const board = room.board || Array(9).fill("");
     if (board[i]) return;
 
     board[i] = mySymbol;
 
     const w = winnerOf(board);
-    const updates = {
+    const next = {
       board,
-      lastMoveAt: Date.now(),
-      turn: (mySymbol === "X" ? "O" : "X")
+      turn: (mySymbol === "X" ? "O" : "X"),
+      updatedAt: fsTimestamp()
     };
 
     if (w){
-      updates.status = "ended";
-      updates.winner = w;
-      updates.endedAt = Date.now();
+      next.status = "ended";
+      next.winner = w;
+      next.endedReason = "";
     }
 
-    await update(ref(db, roomPath), updates);
+    await updateDoc(roomRef, next);
   }
 
+  // Build online board clicks once
+  buildBoard($("onlineBoard"), (i) => tryMoveFs(i));
+
+  // Leave
   $("btnLeave").addEventListener("click", async () => {
     if (!currentRoomId) { showView("online"); return; }
-    const roomPath = `rooms/${currentRoomId}`;
-    const snap = await get(ref(db, roomPath));
+    const roomRef = doc(fs, "gameRooms", currentRoomId);
+    const snap = await getDoc(roomRef);
     if (snap.exists()){
-      const room = snap.val();
+      const room = snap.data();
       const names = room.names || {};
-      await update(ref(db, roomPath), {
+      await updateDoc(roomRef, {
         status: "ended",
         winner: "",
         endedReason: `${names[me.uid] || "Player"} left`,
-        endedAt: Date.now()
+        updatedAt: fsTimestamp()
       });
     }
-    clearRoomSubscriptions();
+    if (roomUnsub) roomUnsub(), roomUnsub = null;
     currentRoomId = null;
     showView("online");
   });
 
+  // Rematch (two votes)
   $("btnRematch").addEventListener("click", async () => {
     if (!currentRoomId || !me) return;
-    const rPath = `rooms/${currentRoomId}`;
-    await set(ref(db, `${rPath}/rematch/${me.uid}`), true);
 
-    const snap = await get(ref(db, rPath));
-    if (!snap.exists()) return;
-    const room = snap.val();
-    const players = room.players || {};
-    const a = players.X, b = players.O;
+    const roomRef = doc(fs, "gameRooms", currentRoomId);
+    const voteRef = doc(fs, "gameRooms", currentRoomId, "rematchVotes", me.uid);
 
-    // if both voted rematch -> reset
-    const rem = (await get(ref(db, `${rPath}/rematch`))).val() || {};
-    if (rem[a] && rem[b]){
-      await update(ref(db, rPath), {
+    await setDoc(voteRef, { vote: true, at: fsTimestamp() });
+
+    const roomSnap = await getDoc(roomRef);
+    if (!roomSnap.exists()) return;
+    const room = roomSnap.data();
+    const a = room.players?.X;
+    const b = room.players?.O;
+
+    const aVote = await getDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", a));
+    const bVote = await getDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", b));
+
+    if (aVote.exists() && bVote.exists()){
+      await updateDoc(roomRef, {
         status: "playing",
         board: Array(9).fill(""),
         turn: "X",
         winner: "",
-        lastMoveAt: Date.now()
+        endedReason: "",
+        updatedAt: fsTimestamp()
       });
-      await remove(ref(db, `${rPath}/rematch`));
+
+      await deleteDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", a));
+      await deleteDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", b));
+
       $("matchMsg").textContent = "Rematch started.";
     } else {
       $("matchMsg").textContent = "Rematch requested. Waiting for friend…";
@@ -695,8 +702,7 @@
 
   // ---------- Navigation ----------
   $("btnBack").addEventListener("click", () => {
-    if (views.room && !views.room.classList.contains("hidden")){
-      // leaving room goes through leave handler
+    if (!views.room.classList.contains("hidden")){
       $("btnLeave").click();
       return;
     }
@@ -718,8 +724,6 @@
       return;
     }
     showView("online");
-    $("presenceBadge").textContent = "Online";
-    $("presenceBadge").className = "badge ok";
   });
 
   // ---------- Name handling ----------
@@ -727,7 +731,15 @@
     if (!me) return;
     const name = $("displayName").value.trim().slice(0, 24);
     me.name = name || me.name || "Player";
+
+    // RTDB presence name
     await update(ref(db, `status/${me.uid}`), { name: me.name });
+
+    // Optional: store in Firestore profile (helps friend list names)
+    try {
+      await setDoc(doc(fs, "users", me.uid), { displayName: me.name }, { merge: true });
+    } catch {}
+
     setStatus(`Signed in as ${me.name}`);
     alert("Name saved.");
   });
@@ -744,148 +756,50 @@
     await signOut(auth);
   });
 
-  if (firebaseEnabled){
-    onAuthStateChanged(auth, async (user) => {
-    clearRoomSubscriptions();
-    currentRoomId = null;
-
-    if (!user){
-      me = null;
-      setStatus("Not signed in");
-      $("btnSignIn").classList.remove("hidden");
-      $("btnSignOut").classList.add("hidden");
-      $("presenceBadge").textContent = "Offline";
-      $("presenceBadge").className = "badge err";
-      showView("menu");
-      return;
-    }
-
-    me = { uid: user.uid, name: user.displayName || "Player" };
-
-    // Load saved name if exists
-    const saved = await loadMyName(me.uid);
-    if (saved) me.name = saved;
-
-    $("displayName").value = me.name;
-    setStatus(`Signed in as ${me.name}`);
-    $("btnSignIn").classList.add("hidden");
-    $("btnSignOut").classList.remove("hidden");
-
-    // Presence
-    await writePresenceOnline(me.uid, me.name);
-    $("presenceBadge").textContent = "Online";
-    $("presenceBadge").className = "badge ok";
-
-    // Lobby subscriptions
-    await subscribeFriends();
-    subscribeInvites();
-    });
-  } else {
-    $("btnSignIn").disabled = true;
-    $("btnSignOut").classList.add("hidden");
-    $("presenceBadge").textContent = "Offline";
-    $("presenceBadge").className = "badge err";
-    setStatus("Offline mode only (Firebase not configured)");
-  }
-
-  // Build online board cells
-  buildBoard($("onlineBoard"), (i) => tryMove(i));
-  // Initial view
-  showView("menu");
-</script>
-
-<script>
-  window.addEventListener("DOMContentLoaded", () => {
-    if (window.xoAppInitialized) return;
-
-    const $ = (id) => document.getElementById(id);
-    const views = {
-      menu: $("viewMenu"),
-      offline: $("viewOffline"),
-      online: $("viewOnline"),
-      room: $("viewRoom")
-    };
-    function showView(name){
-      for (const k of Object.keys(views)) views[k].classList.add("hidden");
-      views[name].classList.remove("hidden");
-      $("btnBack").disabled = (name === "menu");
-    }
-    function setStatus(text){ $("statusLine").textContent = text; }
-
-    const offline = {
-      board: Array(9).fill(""),
-      turn: "X",
-      ended: false
-    };
-
-    function winnerOf(board){
-      const lines = [
-        [0,1,2],[3,4,5],[6,7,8],
-        [0,3,6],[1,4,7],[2,5,8],
-        [0,4,8],[2,4,6]
-      ];
-      for (const [a,b,c] of lines){
-        if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a];
-      }
-      if (board.every(v => v)) return "draw";
-      return "";
-    }
-
-    function renderOffline(){
-      $("offlineTurn").textContent = offline.ended ? "Game Over" : `Turn: ${offline.turn}`;
-      const win = winnerOf(offline.board);
-      $("offlineMsg").textContent =
-        win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
-    }
-
-    function buildBoard(container, onClick){
-      container.innerHTML = "";
-      for (let i=0;i<9;i++){
-        const d = document.createElement("div");
-        d.className = "cell";
-        d.dataset.i = String(i);
-        d.addEventListener("click", () => onClick(i));
-        container.appendChild(d);
-      }
-    }
-
-    buildBoard($("offlineBoard"), (i) => {
-      if (offline.ended) return;
-      if (offline.board[i]) return;
-      offline.board[i] = offline.turn;
-      const win = winnerOf(offline.board);
-      if (win) offline.ended = true;
-      offline.turn = offline.turn === "X" ? "O" : "X";
-      [...$("offlineBoard").children].forEach((c, idx) => c.textContent = offline.board[idx]);
-      renderOffline();
-    });
-
-    $("offlineReset").addEventListener("click", () => {
-      offline.board = Array(9).fill("");
-      offline.turn = "X";
-      offline.ended = false;
-      [...$("offlineBoard").children].forEach(c => c.textContent = "");
-      renderOffline();
-    });
-
-    $("startOffline").addEventListener("click", () => {
-      showView("offline");
-      $("offlineReset").click();
-    });
-
-    $("btnBack").addEventListener("click", () => showView("menu"));
-
+  // ---------- Auth state ----------
+  if (!firebaseEnabled){
     $("btnSignIn").disabled = true;
     $("btnSignOut").classList.add("hidden");
     $("startOnline").disabled = true;
-    const badge = $("presenceBadge");
-    if (badge){
-      badge.textContent = "Offline";
-      badge.className = "badge err";
-    }
+    $("onlineHint").textContent = "Online mode disabled (Firebase not configured).";
     setStatus("Offline mode only");
     showView("menu");
-  });
+  } else {
+    onAuthStateChanged(auth, async (user) => {
+      cleanupOnlineSubs();
+      currentRoomId = null;
+
+      if (!user){
+        me = null;
+        setStatus("Not signed in");
+        $("btnSignIn").classList.remove("hidden");
+        $("btnSignOut").classList.add("hidden");
+        $("presenceBadge").textContent = "Offline";
+        $("presenceBadge").className = "badge err";
+        showView("menu");
+        return;
+      }
+
+      me = { uid: user.uid, name: user.displayName || "Player" };
+
+      // Prefer presence stored name (if you used Save)
+      const saved = await loadMyNameFromPresence(me.uid);
+      if (saved) me.name = saved;
+
+      $("displayName").value = me.name;
+      setStatus(`Signed in as ${me.name}`);
+      $("btnSignIn").classList.add("hidden");
+      $("btnSignOut").classList.remove("hidden");
+
+      await writePresenceOnline(me.uid, me.name);
+
+      // Online lobby live data
+      await subscribeFriends();
+      subscribeInvites();
+    });
+
+    showView("menu");
+  }
 </script>
 </body>
 </html>
