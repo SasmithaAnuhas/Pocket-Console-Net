@@ -576,15 +576,20 @@
         }
       }
 
-      await Promise.allSettled([
-        deleteDoc(doc(fs, `users/${me.uid}/friends/${fromUid}`)),
-        deleteDoc(doc(fs, `users/${fromUid}/friends/${me.uid}`))
-      ]);
+      const myFriendRef = doc(fs, `users/${me.uid}/friends/${fromUid}`);
+      try {
+        const myFriendSnap = await getDoc(myFriendRef);
+        if (myFriendSnap.exists()) {
+          await deleteDoc(myFriendRef);
+        }
+      } catch (e) {
+        showError("Cleanup existing friend", e);
+      }
 
       const batch = writeBatch(fs);
 
       // add to my friends
-      batch.set(doc(fs, `users/${me.uid}/friends/${fromUid}`), {
+      batch.set(myFriendRef, {
         uid: fromUid,
         publicId: other.publicId || null,
         displayName: other.displayName || "User",
