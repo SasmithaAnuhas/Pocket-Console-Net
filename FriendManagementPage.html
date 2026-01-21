@@ -298,6 +298,15 @@
     function requestId(fromUid, toUid) {
       return `${fromUid}_${toUid}`;
     }
+    async function cleanupStaleRequests() {
+      if (!me || myFriends.size === 0) return;
+      const deletes = [];
+      myFriends.forEach((uid) => {
+        deletes.push(deleteDoc(doc(fs, "friendRequests", requestId(me.uid, uid))).catch(() => {}));
+        deletes.push(deleteDoc(doc(fs, "friendRequests", requestId(uid, me.uid))).catch(() => {}));
+      });
+      await Promise.allSettled(deletes);
+    }
 
     // Tabs
     document.querySelectorAll(".tabBtn").forEach(btn => {
@@ -414,6 +423,15 @@
           lastLoginAt: serverTimestamp()
         }, { merge: true });
       }
+
+      // Keep publicUsers in sync for public ID search.
+      await setDoc(doc(fs, "publicUsers", uid), {
+        uid,
+        publicId,
+        displayName,
+        photoURL,
+        lastLoginAt: serverTimestamp()
+      }, { merge: true });
 
       const latest = await getDoc(uref);
       return latest.data();
@@ -778,6 +796,7 @@
           friends.push({ uid: d.id, ...data });
         });
         renderFriends(friends);
+        cleanupStaleRequests();
       }, (e) => showError("Friends onSnapshot", e));
 
       // incoming requests (toUid == me)
