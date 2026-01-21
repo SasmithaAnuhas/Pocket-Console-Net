@@ -181,7 +181,6 @@
       collection,
       query,
       where,
-      getDocs,
       onSnapshot,
       serverTimestamp,
       writeBatch,
@@ -228,10 +227,6 @@
     const goLoginBtn = document.getElementById("goLoginBtn");
     const logoutBtn = document.getElementById("logoutBtn");
 
-    const publicSearchInput = document.getElementById("publicSearchInput");
-    const searchBtn = document.getElementById("searchBtn");
-    const searchResults = document.getElementById("searchResults");
-
     const incomingList = document.getElementById("incomingList");
     const outgoingList = document.getElementById("outgoingList");
     const friendsList = document.getElementById("friendsList");
@@ -246,7 +241,7 @@
         </svg>
       `);
 
-    function safeText(v, fallback = "—") {
+    function safeText(v, fallback = "-") {
       if (v === null || v === undefined) return fallback;
       const s = String(v).trim();
       return s.length ? s : fallback;
@@ -407,15 +402,6 @@
         }, { merge: true });
       }
 
-      // Keep publicUsers in sync for public ID search.
-      await setDoc(doc(fs, "publicUsers", uid), {
-        uid,
-        publicId,
-        displayName,
-        photoURL,
-        lastLoginAt: serverTimestamp()
-      }, { merge: true });
-
       const latest = await getDoc(uref);
       return latest.data();
     }
@@ -425,21 +411,10 @@
         <div class="item" style="opacity:.85;">
           <div class="itemMeta">
             <p class="itemTitle">${escapeHtml(text)}</p>
-            <div class="mono">—</div>
+            <div class="mono">-</div>
           </div>
         </div>
       `;
-    }
-
-    async function searchByPublicId(publicId) {
-      const cleaned = safeText(publicId, "").toUpperCase();
-      if (!cleaned) return [];
-
-      const q = query(collection(fs, "publicUsers"), where("publicId", "==", cleaned));
-      const res = await getDocs(q);
-      const out = [];
-      res.forEach(d => out.push(d.data()));
-      return out;
     }
 
     async function sendFriendRequest(targetProfile) {
@@ -534,30 +509,12 @@
       }
 
       const req = reqSnap.data() || {};
-      let other = {
+      const other = {
         uid: req.fromUid || fromUid,
         publicId: req.fromPublicId || null,
         displayName: req.fromName || "User",
         photoURL: req.fromPhoto || null
       };
-
-      const needsPublicFetch = !other.publicId || !other.displayName || !other.photoURL;
-      if (needsPublicFetch) {
-        try {
-          const publicSnap = await getDoc(doc(fs, "publicUsers", fromUid));
-          if (publicSnap.exists()) {
-            const p = publicSnap.data() || {};
-            other = {
-              uid: fromUid,
-              publicId: p.publicId || other.publicId,
-              displayName: p.displayName || other.displayName,
-              photoURL: p.photoURL || other.photoURL
-            };
-          }
-        } catch (e) {
-          showError("Public profile lookup", e);
-        }
-      }
 
       const myFriendRef = doc(fs, `users/${me.uid}/friends/${fromUid}`);
       try {
@@ -606,72 +563,6 @@
       statusEl.textContent = "Status: Friend removed.";
     }
 
-    function renderSearchResults(results) {
-      searchResults.innerHTML = "";
-
-      if (!results.length) {
-        renderEmpty(searchResults, "No users found for that Public ID.");
-        return;
-      }
-
-      results.forEach(p => {
-        const isMe = p.uid === me.uid;
-        const isFriend = myFriends.has(p.uid);
-        const outgoing = outgoingReqTo.has(p.uid);
-        const incoming = incomingReqFrom.has(p.uid);
-
-        let actionHtml = "";
-        if (isMe) {
-          actionHtml = `<button disabled type="button">This is you</button>`;
-        } else if (isFriend) {
-          actionHtml = `<button disabled type="button">Already friends</button>`;
-        } else if (incoming) {
-          actionHtml = `<button disabled type="button">They requested you (check Requests)</button>`;
-        } else if (outgoing) {
-          actionHtml = `<button class="danger" data-cancel="${escapeHtml(p.uid)}" type="button">Cancel request</button>`;
-        } else {
-          actionHtml = `<button class="primary" data-add="${escapeHtml(p.uid)}" type="button">Send request</button>`;
-        }
-
-        const photo = normalizeGooglePhoto(p.photoURL || fallbackAvatar);
-        searchResults.insertAdjacentHTML("beforeend", `
-          <div class="item">
-            <img class="avatar" alt="User" src="${escapeHtml(photo)}" />
-            <div class="itemMeta">
-              <p class="itemTitle">${escapeHtml(p.displayName || "User")}</p>
-              <div class="mono">Public ID: ${escapeHtml(p.publicId || "—")}</div>
-              <div class="mono">UID: ${escapeHtml(p.uid || "—")}</div>
-            </div>
-            <div class="rightActions">
-              ${actionHtml}
-            </div>
-          </div>
-        `);
-      });
-
-      // wire actions
-      searchResults.querySelectorAll("[data-add]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const uid = btn.getAttribute("data-add");
-          const target = results.find(x => x.uid === uid);
-          if (!target) return;
-          btn.disabled = true;
-          try { await sendFriendRequest(target); }
-          catch (e) { showError("Send request", e); statusEl.textContent = "Status: Failed to send request."; }
-          finally { btn.disabled = false; }
-        });
-      });
-
-      searchResults.querySelectorAll("[data-cancel]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const uid = btn.getAttribute("data-cancel");
-          btn.disabled = true;
-          try { await cancelOutgoing(uid); }
-          catch (e) { showError("Cancel request", e); statusEl.textContent = "Status: Failed to cancel request."; }
-          finally { btn.disabled = false; }
-        });
-      });
-    }
 
     function renderIncoming(reqs) {
       incomingList.innerHTML = "";
@@ -684,8 +575,8 @@
             <img class="avatar" alt="User" src="${escapeHtml(photo)}" />
             <div class="itemMeta">
               <p class="itemTitle">${escapeHtml(r.fromName || "User")}</p>
-              <div class="mono">From: ${escapeHtml(r.fromPublicId || "—")}</div>
-              <div class="mono">UID: ${escapeHtml(r.fromUid || "—")}</div>
+              <div class="mono">From: ${escapeHtml(r.fromPublicId || "-")}</div>
+              <div class="mono">UID: ${escapeHtml(r.fromUid || "-")}</div>
             </div>
             <div class="rightActions">
               <button class="primary" data-accept="${escapeHtml(r.fromUid)}" type="button">Accept</button>
@@ -727,8 +618,8 @@
             <img class="avatar" alt="User" src="${escapeHtml(photo)}" />
             <div class="itemMeta">
               <p class="itemTitle">${escapeHtml(r.toName || "User")}</p>
-              <div class="mono">To: ${escapeHtml(r.toPublicId || "—")}</div>
-              <div class="mono">UID: ${escapeHtml(r.toUid || "—")}</div>
+              <div class="mono">To: ${escapeHtml(r.toPublicId || "-")}</div>
+              <div class="mono">UID: ${escapeHtml(r.toUid || "-")}</div>
             </div>
             <div class="rightActions">
               <button class="danger" data-cancel="${escapeHtml(r.toUid)}" type="button">Cancel</button>
@@ -765,8 +656,8 @@
             <img class="avatar" alt="User" src="${escapeHtml(photo)}" />
             <div class="itemMeta">
               <p class="itemTitle">${escapeHtml(f.displayName || "User")}</p>
-              <div class="mono">Public ID: ${escapeHtml(f.publicId || "—")}</div>
-              <div class="mono">UID: ${escapeHtml(f.uid || "—")}</div>
+              <div class="mono">Public ID: ${escapeHtml(f.publicId || "-")}</div>
+              <div class="mono">UID: ${escapeHtml(f.uid || "-")}</div>
             </div>
             <div class="rightActions" style="align-items:center;">
               <span class="presenceSlot">${miniPresencePill(online)}</span>
@@ -848,26 +739,6 @@
       }, (e) => showError("Outgoing onSnapshot", e));
     }
 
-    // Search button
-    searchBtn.addEventListener("click", async () => {
-      if (!me) { statusEl.textContent = "Status: Please sign in first."; return; }
-      const pid = publicSearchInput.value;
-      statusEl.textContent = "Status: Searching…";
-      debugEl.textContent = "Debug: —";
-      searchBtn.disabled = true;
-
-      try {
-        const res = await searchByPublicId(pid);
-        renderSearchResults(res);
-        statusEl.textContent = `Status: Found ${res.length} result(s).`;
-      } catch (e) {
-        showError("Search", e);
-        statusEl.textContent = "Status: Search failed (see Debug).";
-      } finally {
-        searchBtn.disabled = false;
-      }
-    });
-
     // Login navigation / logout
     goLoginBtn.addEventListener("click", () => {
       // Change this if your login page is different
@@ -876,8 +747,8 @@
 
     logoutBtn.addEventListener("click", async () => {
       logoutBtn.disabled = true;
-      statusEl.textContent = "Status: Signing out…";
-      debugEl.textContent = "Debug: —";
+      statusEl.textContent = "Status: Signing out...";
+      debugEl.textContent = "Debug: -";
 
       try {
         const u = auth.currentUser;
@@ -900,9 +771,7 @@
       sublineEl.textContent = "Please go to Login page and sign in.";
       setPresenceBadge(false);
       statusEl.textContent = "Status: Signed out.";
-      debugEl.textContent = "Debug: —";
-
-      searchResults.innerHTML = "";
+      debugEl.textContent = "Debug: -";
       renderEmpty(incomingList, "Sign in to see incoming requests.");
       renderEmpty(outgoingList, "Sign in to see outgoing requests.");
       renderEmpty(friendsList, "Sign in to see friends.");
@@ -914,14 +783,14 @@
       authChip.textContent = "Signed in";
       avatarEl.src = normalizeGooglePhoto(getBestPhotoURL(user));
       nameEl.textContent = safeText(user.displayName, "Google User");
-      sublineEl.textContent = `Public ID: ${makePublicId(user.uid)} • UID: ${user.uid}`;
+      sublineEl.textContent = `Public ID: ${makePublicId(user.uid)} | UID: ${user.uid}`;
     }
 
     async function init() {
-      statusEl.textContent = "Status: Initializing…";
-      renderEmpty(incomingList, "Loading…");
-      renderEmpty(outgoingList, "Loading…");
-      renderEmpty(friendsList, "Loading…");
+      statusEl.textContent = "Status: Initializing...";
+      renderEmpty(incomingList, "Loading...");
+      renderEmpty(outgoingList, "Loading...");
+      renderEmpty(friendsList, "Loading...");
 
       onAuthStateChanged(auth, async (user) => {
         if (!user) {
@@ -937,10 +806,10 @@
         me = user;
         await setLoggedInUI(user);
 
-        statusEl.textContent = "Status: Loading your profile…";
+        statusEl.textContent = "Status: Loading your profile...";
         try {
           myProfile = await ensureMyProfile(user);
-          statusEl.textContent = "Status: Profile ready. Loading friends & requests…";
+          statusEl.textContent = "Status: Profile ready. Loading friends & requests...";
         } catch (e) {
           showError("Ensure profile", e);
           statusEl.textContent = "Status: Signed in, but profile load failed (see Debug).";
