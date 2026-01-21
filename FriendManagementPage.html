@@ -475,7 +475,11 @@
 
       const rid = requestId(me.uid, targetProfile.uid);
       const rref = doc(fs, "friendRequests", rid);
-
+      const existing = await getDoc(rref);
+      if (existing.exists()) {
+        // Clear stale request so a fresh one can be sent.
+        await deleteDoc(rref);
+      }
       await setDoc(rref, {
         fromUid: me.uid,
         toUid: targetProfile.uid,
@@ -532,6 +536,7 @@
       if (!me || !myProfile) return;
 
       const reqRef = doc(fs, "friendRequests", requestId(fromUid, me.uid));
+      const reverseReqRef = doc(fs, "friendRequests", requestId(me.uid, fromUid));
       const reqSnap = await getDoc(reqRef);
       if (!reqSnap.exists()) {
         statusEl.textContent = "Status: Request not found (maybe already handled).";
@@ -567,8 +572,9 @@
         createdAt: serverTimestamp()
       }, { merge: true });
 
-      // delete request
+      // delete request (and any reverse stale request)
       batch.delete(reqRef);
+      batch.delete(reverseReqRef);
 
       await batch.commit();
       statusEl.textContent = "Status: Friend request accepted.";
