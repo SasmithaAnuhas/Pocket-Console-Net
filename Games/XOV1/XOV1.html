@@ -55,6 +55,24 @@
     .err{ border-color:#e55; }
     .hidden{ display:none !important; }
     .twoBtns{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .notice{
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #223044;
+      background: #0b111a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+      color: #c7d4e6;
+    }
+    .noticeText{ font-weight: 600; color: #e8eef6; }
+    .playerActive{
+      border-color: #00ffcc;
+      box-shadow: 0 0 0 1px rgba(0,255,204,0.18) inset;
+    }
     input{
       background:#0b111a; color:#e8eef6; border:1px solid #223044;
       padding:10px 12px; border-radius:12px; width:100%;
@@ -66,7 +84,7 @@
     <header>
       <div>
         <div class="brand">XO (Offline / Online)</div>
-        <div class="muted" id="statusLine">Not signed in</div>
+        <div class="muted" id="statusLine">Connecting...</div>
       </div>
       <div class="twoBtns">
         <button class="pill" id="btnBack" disabled>Back</button>
@@ -93,7 +111,7 @@
             <div style="font-weight:700;">Online mode</div>
             <div class="muted">Invite an online friend and play</div>
           </div>
-          <button id="startOnline">Start Online</button>
+          <button id="startOnline" disabled>Start Online</button>
         </div>
         <div class="muted" style="margin-top:10px;" id="onlineHint">
           Online mode requires sign-in.
@@ -109,7 +127,10 @@
             <div style="font-weight:700;">Offline Game</div>
             <div class="muted" id="offlineTurn">Turn: X</div>
           </div>
-          <button id="offlineReset">Reset</button>
+        </div>
+        <div class="notice hidden" id="offlineEndBox">
+          <div class="noticeText">Match ended.</div>
+          <button id="offlinePlayAgain">Play Again</button>
         </div>
         <div class="grid" id="offlineBoard"></div>
         <div class="muted" style="margin-top:10px;" id="offlineMsg"></div>
@@ -136,6 +157,7 @@
         </div>
 
         <div class="list" id="friendsList"></div>
+        <div class="notice hidden" id="inviteMsg"></div>
       </div>
 
       <div class="card">
@@ -166,13 +188,17 @@
         <div class="muted" style="margin-top:10px;" id="matchInfo">—</div>
         <div class="grid" id="onlineBoard"></div>
         <div class="muted" style="margin-top:10px;" id="matchMsg"></div>
+        <div class="notice hidden" id="onlineEndBox">
+          <div class="noticeText" id="onlineEndText">Match ended.</div>
+          <button id="onlinePlayAgain">Play Again</button>
+        </div>
       </div>
 
       <div class="card">
         <div style="font-weight:700;">Players</div>
         <div class="list" style="margin-top:10px;">
-          <div class="item"><div id="pX">X: —</div><span class="badge" id="pXb">—</span></div>
-          <div class="item"><div id="pO">O: —</div><span class="badge" id="pOb">—</span></div>
+          <div class="item" id="pXItem"><div id="pX">X: —</div><span class="badge" id="pXb">—</span></div>
+          <div class="item" id="pOItem"><div id="pO">O: —</div><span class="badge" id="pOb">—</span></div>
         </div>
         <div class="muted" style="margin-top:10px;">
           If a player disconnects, the match ends for both.
@@ -220,6 +246,17 @@
     $("btnBack").disabled = (name === "menu");
   }
   function setStatus(text){ $("statusLine").textContent = text; }
+  function setInviteMsg(text){
+    const box = $("inviteMsg");
+    if (!box) return;
+    if (!text){
+      box.textContent = "";
+      box.classList.add("hidden");
+      return;
+    }
+    box.textContent = text;
+    box.classList.remove("hidden");
+  }
 
   function escapeHtml(s){
     return (s||"").replace(/[&<>"']/g, (c) => ({
@@ -266,6 +303,8 @@
     $("offlineTurn").textContent = offline.ended ? "Game Over" : `Turn: ${offline.turn}`;
     const win = winnerOf(offline.board);
     $("offlineMsg").textContent = win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
+    const endBox = $("offlineEndBox");
+    if (endBox) endBox.classList.toggle("hidden", !win);
   }
 
   buildBoard($("offlineBoard"), (i) => {
@@ -279,13 +318,14 @@
     renderOffline();
   });
 
-  $("offlineReset").addEventListener("click", () => {
+  function resetOffline(){
     offline.board = Array(9).fill("");
     offline.turn = "X";
     offline.ended = false;
     [...$("offlineBoard").children].forEach(c => c.textContent = "");
     renderOffline();
-  });
+  }
+  $("offlinePlayAgain").addEventListener("click", resetOffline);
 
   // ---------- Firebase enable guard ----------
   let app, auth, db, fs;
@@ -483,7 +523,7 @@
       updatedAt: fsTimestamp()
     });
 
-    alert(`Invite sent to ${toName}. Waiting for accept…`);
+    setInviteMsg(`Invite sent to ${toName}. Waiting for accept...`);
     watchInviteResult(inviteId);
   }
 
@@ -497,13 +537,14 @@
 
       if (inv.status === "accepted" && inv.roomId){
         if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
+        setInviteMsg("");
         joinRoomFs(inv.roomId);
       } else if (inv.status === "rejected"){
         if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
-        alert("Invite rejected.");
+        setInviteMsg("Invite rejected.");
       } else if (inv.status === "cancelled"){
         if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
-        alert("Invite cancelled.");
+        setInviteMsg("Invite cancelled.");
       }
     });
   }
@@ -546,9 +587,11 @@
   async function joinRoomFs(roomId){
     currentRoomId = roomId;
     showView("room");
+    setInviteMsg("");
     $("roomLine").textContent = `Room: ${roomId}`;
     $("btnRematch").disabled = true;
     $("matchMsg").textContent = "";
+    $("onlineEndBox").classList.add("hidden");
 
     if (roomUnsub) roomUnsub();
 
@@ -576,12 +619,25 @@
         status === "ended" ? "Match ended." :
         winner === "draw" ? "Draw." :
         winner ? `${winner} wins.` :
-        `Turn: ${turn} — You are ${mySymbol || "?"}`;
+        `Turn: ${turn} - You are ${mySymbol || "?"}`;
+
+      const endBox = $("onlineEndBox");
+      if (endBox){
+        const showEnd = status === "ended";
+        endBox.classList.toggle("hidden", !showEnd);
+        if (showEnd){
+          $("onlineEndText").textContent =
+            winner === "draw" ? "Draw." :
+            winner ? `${winner} wins.` : "Match ended.";
+        }
+      }
 
       [...$("onlineBoard").children].forEach((c, idx) => c.textContent = board[idx] || "");
 
-      $("pX").textContent = `X: ${names[players.X] || players.X || "—"}`;
-      $("pO").textContent = `O: ${names[players.O] || players.O || "—"}`;
+      $("pX").textContent = `X: ${names[players.X] || players.X || "-"}`;
+      $("pO").textContent = `O: ${names[players.O] || players.O || "-"}`;
+      $("pXItem").classList.toggle("playerActive", mySymbol === "X");
+      $("pOItem").classList.toggle("playerActive", mySymbol === "O");
 
       // Presence check (RTDB)
       if (oppUid){
@@ -713,7 +769,10 @@
 
   $("startOffline").addEventListener("click", () => {
     showView("offline");
-    $("offlineReset").click();
+    resetOffline();
+  });
+  $("onlinePlayAgain").addEventListener("click", () => {
+    $("btnRematch").click();
   });
 
   $("startOnline").addEventListener("click", async () => {
@@ -767,6 +826,7 @@
     setStatus("Offline mode only");
     showView("menu");
   } else {
+    $("startOnline").disabled = true;
     onAuthStateChanged(auth, async (user) => {
       cleanupOnlineSubs();
       currentRoomId = null;
@@ -776,6 +836,8 @@
         setStatus("Not signed in");
         $("btnSignIn").classList.remove("hidden");
         $("btnSignOut").classList.add("hidden");
+        $("startOnline").disabled = true;
+        $("onlineHint").textContent = "Sign in to play online.";
         $("presenceBadge").textContent = "Offline";
         $("presenceBadge").className = "badge err";
         showView("menu");
@@ -792,6 +854,8 @@
       setStatus(`Signed in as ${me.name}`);
       $("btnSignIn").classList.add("hidden");
       $("btnSignOut").classList.remove("hidden");
+      $("startOnline").disabled = false;
+      $("onlineHint").textContent = "Invite a friend to start an online match.";
 
       await writePresenceOnline(me.uid, me.name);
 
@@ -805,3 +869,4 @@
 </script>
 </body>
 </html>
+
