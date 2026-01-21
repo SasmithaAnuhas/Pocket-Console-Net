@@ -606,11 +606,18 @@
         createdAt: serverTimestamp()
       }, { merge: false });
 
-      // delete request (and any reverse stale request)
+      // delete request
       batch.delete(reqRef);
-      batch.delete(reverseReqRef);
 
       await batch.commit();
+      try {
+        const reverseSnap = await getDoc(reverseReqRef);
+        if (reverseSnap.exists()) {
+          await deleteDoc(reverseReqRef);
+        }
+      } catch (e) {
+        showError("Cleanup reverse request", e);
+      }
       statusEl.textContent = "Status: Friend request accepted.";
     }
 
