@@ -349,15 +349,15 @@
       if (snap.val() !== true) return;
 
       await onDisconnect(statusRef).set({
-        online: false,
+        state: "offline",
         name: name || "Player",
-        lastSeen: serverTimestamp()
+        lastChanged: Date.now()
       });
 
       await set(statusRef, {
-        online: true,
+        state: "online",
         name: name || "Player",
-        lastSeen: serverTimestamp()
+        lastChanged: Date.now()
       });
 
       $("presenceBadge").textContent = "Online";
@@ -470,7 +470,7 @@
         const statusRef = ref(db, `status/${row.uid}`);
         const unsub = onValue(statusRef, (snap2) => {
           const val = snap2.val();
-          row.online = !!(val && val.online);
+          row.online = !!(val && val.state === "online");
           if (val?.name && (!row.name || row.name === row.uid.slice(0,6))){
             row.name = val.name;
           }
@@ -595,8 +595,8 @@
         setInviteMsg("Invite cancelled.");
       }
     }, (err) => {
-      console.error("[Invites]", err);
-      listEl.innerHTML = `<div class="muted">Failed to load invites. Check Firestore rules.</div>`;
+      console.error("[Invite watch]", err);
+      setInviteMsg("Invite watch failed. Check Firestore rules.");
     });
   }
 
@@ -693,7 +693,7 @@
       // Presence check (RTDB)
       if (oppUid){
         const oppSnap = await get(ref(db, `status/${oppUid}`));
-        const oppOnline = !!(oppSnap.val() && oppSnap.val().online);
+        const oppOnline = !!(oppSnap.val() && oppSnap.val().state === "online");
 
         $("pXb").textContent = (players.X === me.uid ? "You" : (oppOnline ? "Online" : "Offline"));
         $("pOb").textContent = (players.O === me.uid ? "You" : (oppOnline ? "Online" : "Offline"));
