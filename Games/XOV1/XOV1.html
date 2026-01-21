@@ -537,6 +537,8 @@
 
   async function sendInviteFs(toUid, toName){
     if (!me) return;
+    setInviteMsg("Sending invite...");
+    setStatus("Sending invite...");
 
     // Pre-check my side only (can't read their friends doc with current rules)
     try {
@@ -544,11 +546,13 @@
       const mineSnap = await getDoc(mineRef);
       if (!mineSnap.exists()){
         setInviteMsg("Invite blocked: add them as a friend first.");
+        setStatus("Invite blocked: add them as a friend first.");
         return;
       }
     } catch (e) {
       console.error("[Invite precheck]", e);
       setInviteMsg("Invite check failed. Try again.");
+      setStatus("Invite check failed.");
       return;
     }
 
@@ -568,10 +572,12 @@
       });
 
       setInviteMsg(`Invite sent to ${toName}. Waiting for accept...`);
+      setStatus(`Invite sent to ${toName}.`);
       watchInviteResult(inviteId);
     } catch (e) {
       console.error("[Invite]", e);
       setInviteMsg("Invite failed. Check your permissions/rules.");
+      setStatus("Invite failed. Check your permissions/rules.");
     }
   }
 
