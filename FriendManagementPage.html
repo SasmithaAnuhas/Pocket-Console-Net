@@ -473,6 +473,31 @@
       statusEl.textContent = "Status: Friend request sent.";
     }
 
+    async function sendResyncRequest(targetProfile) {
+      if (!me || !myProfile) return;
+      const rid = requestId(me.uid, targetProfile.uid);
+      const rref = doc(fs, "friendRequests", rid);
+      const existing = await getDoc(rref);
+      if (existing.exists()) {
+        statusEl.textContent = "Status: Request already pending.";
+        return;
+      }
+
+      await setDoc(rref, {
+        fromUid: me.uid,
+        toUid: targetProfile.uid,
+        fromPublicId: myProfile.publicId,
+        toPublicId: targetProfile.publicId || null,
+        fromName: myProfile.displayName || "User",
+        fromPhoto: myProfile.photoURL || null,
+        toName: targetProfile.displayName || "User",
+        toPhoto: targetProfile.photoURL || null,
+        createdAt: serverTimestamp()
+      }, { merge: false });
+
+      statusEl.textContent = "Status: Sync request sent.";
+    }
+
     async function cancelOutgoing(toUid) {
       if (!me) return;
       await deleteDoc(doc(fs, "friendRequests", requestId(me.uid, toUid)));
@@ -687,6 +712,7 @@
       stopAllFriendPresence();
 
       if (!friends.length) { renderEmpty(friendsList, "You have no friends yet."); return; }
+      const friendMap = new Map(friends.map(f => [f.uid, f]));
 
       // render immediately (presence will update live)
       friends.forEach(f => {
@@ -703,6 +729,7 @@
             </div>
             <div class="rightActions" style="align-items:center;">
               <span class="presenceSlot">${miniPresencePill(online)}</span>
+              <button class="primary" data-resync="${escapeHtml(f.uid)}" type="button">Resync</button>
               <button class="danger" data-remove="${escapeHtml(f.uid)}" type="button">Remove</button>
             </div>
           </div>
@@ -723,6 +750,18 @@
           btn.disabled = true;
           try { await removeFriend(uid); }
           catch (e) { showError("Remove friend", e); statusEl.textContent = "Status: Failed to remove friend."; }
+          finally { btn.disabled = false; }
+        });
+      });
+
+      friendsList.querySelectorAll("[data-resync]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const uid = btn.getAttribute("data-resync");
+          const target = friendMap.get(uid);
+          if (!target) return;
+          btn.disabled = true;
+          try { await sendResyncRequest(target); }
+          catch (e) { showError("Resync request", e); statusEl.textContent = "Status: Resync failed."; }
           finally { btn.disabled = false; }
         });
       });
