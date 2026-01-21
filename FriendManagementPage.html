@@ -543,14 +543,31 @@
         return;
       }
 
-      // fetch other profile
-      const otherSnap = await getDoc(doc(fs, "users", fromUid));
-      if (!otherSnap.exists()) {
-        statusEl.textContent = "Status: User profile not found.";
-        return;
-      }
+      const req = reqSnap.data() || {};
+      let other = {
+        uid: req.fromUid || fromUid,
+        publicId: req.fromPublicId || null,
+        displayName: req.fromName || "User",
+        photoURL: req.fromPhoto || null
+      };
 
-      const other = otherSnap.data();
+      const needsPublicFetch = !other.publicId || !other.displayName || !other.photoURL;
+      if (needsPublicFetch) {
+        try {
+          const publicSnap = await getDoc(doc(fs, "publicUsers", fromUid));
+          if (publicSnap.exists()) {
+            const p = publicSnap.data() || {};
+            other = {
+              uid: fromUid,
+              publicId: p.publicId || other.publicId,
+              displayName: p.displayName || other.displayName,
+              photoURL: p.photoURL || other.photoURL
+            };
+          }
+        } catch (e) {
+          showError("Public profile lookup", e);
+        }
+      }
 
       const batch = writeBatch(fs);
 
@@ -798,7 +815,8 @@
         const friends = [];
         snap.forEach(d => {
           const data = d.data();
-          if (data?.uid) myFriends.add(data.uid);
+          const uid = data?.uid || d.id;
+          if (uid) myFriends.add(uid);
           friends.push({ uid: d.id, ...data });
         });
         renderFriends(friends);
