@@ -170,7 +170,7 @@
 
     <div id="bottomTime" class="bottomTime">00:00</div>
 
-    <a href="https://sapocketconsole.blogspot.com/p/friendmanagementpage.html" class="iconButton" aria-label="Friends">
+    <a href="FriendManagementPage.html" class="iconButton" aria-label="Friends">
       <span class="iconBubble" aria-hidden="true">👥</span>
     </a>
 
@@ -180,6 +180,7 @@
     </a>
   </nav>
 
+  <a href="ChatPage.html" class="floatingChat" aria-label="Open chat">💬</a>
   
   
   <style>
@@ -510,6 +511,28 @@
       align-items:center;
       justify-content:center;
       width: 40px; height: 40px;
+    }
+    .floatingChat{
+      position: fixed;
+      right: 16px;
+      bottom: calc(12px + env(safe-area-inset-bottom) + 52px);
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size: 16px;
+      color: #fff;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.38);
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+      z-index: 10000;
+    }
+    .floatingChat:hover{
+      transform: translateY(-1px);
+      border-color: rgba(0,255,204,0.45);
+      box-shadow: 0 14px 28px rgba(0,0,0,0.48);
     }
     .iconButton{
       display:flex;
