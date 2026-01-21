@@ -538,6 +538,18 @@
   async function sendInviteFs(toUid, toName){
     if (!me) return;
 
+    // Pre-check mutual friendship to avoid rule failures
+    const mineRef = doc(fs, `users/${me.uid}/friends/${toUid}`);
+    const theirsRef = doc(fs, `users/${toUid}/friends/${me.uid}`);
+    const [mineSnap, theirsSnap] = await Promise.all([
+      getDoc(mineRef),
+      getDoc(theirsRef)
+    ]);
+    if (!mineSnap.exists() || !theirsSnap.exists()){
+      setInviteMsg("Invite blocked: you must be mutual friends first.");
+      return;
+    }
+
     const inviteId = chatIdFor(me.uid, toUid);
     const inviteRef = doc(fs, "gameInvites", inviteId);
 
