@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pocket Console – Friends</title>
+  <title>Pocket Console - Friends</title>
   <style>
     :root { color-scheme: dark; }
     body{
@@ -99,7 +99,7 @@
   <div class="card">
     <div class="header">
       <div class="brand"><span class="dot"></span> Pocket Console</div>
-      <div id="authChip" style="font-size:12px;opacity:.85;">Checking sign-in…</div>
+      <div id="authChip" style="font-size:12px;opacity:.85;">Checking sign-in...</div>
     </div>
 
     <div class="content">
@@ -107,7 +107,7 @@
         <img id="avatar" class="avatar" alt="Profile photo" src="" />
         <div class="meta">
           <p id="name" class="name">Not signed in</p>
-          <p id="subline" class="sub">—</p>
+          <p id="subline" class="sub">-</p>
         </div>
 
         <div class="pill" title="Realtime presence (RTDB)">
@@ -121,29 +121,12 @@
         </div>
       </div>
 
-      <div id="status" class="status">Status: Initializing…</div>
-      <div id="debug" class="hint">Debug: —</div>
+      <div id="status" class="status">Status: Initializing...</div>
+      <div id="debug" class="hint">Debug: -</div>
 
       <div class="tabs">
         <button class="tabBtn active" data-tab="tabFriends" type="button">Friends</button>
         <button class="tabBtn" data-tab="tabRequests" type="button">Requests</button>
-        <button class="tabBtn" data-tab="tabSearch" type="button">Add Friends</button>
-      </div>
-
-      <!-- SEARCH -->
-      <div id="tabSearch" class="panel">
-        <div class="field">
-          <p class="fieldLabel">Search by Public ID</p>
-          <div class="fieldRow">
-            <input id="publicSearchInput" type="text" placeholder="Example: PC-1A2B3C4D" />
-            <button id="searchBtn" class="primary" type="button">Search</button>
-          </div>
-          <div class="hint">
-            Tip: Public ID is generated from the user UID (your format: <code>PC-</code> + first 8 chars).
-          </div>
-        </div>
-
-        <div class="list" id="searchResults"></div>
       </div>
 
       <!-- REQUESTS -->
