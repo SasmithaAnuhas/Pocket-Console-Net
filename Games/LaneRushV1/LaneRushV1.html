@@ -213,10 +213,10 @@ html, body {
 
   const ASSETS = {
     road: "Assets/Road/Track1/ModedRoadAsphalt1.png",
-    roadEdge: "Assets/Road/Grass/LandGrass1.png",
+    roadEdge: "Assets/Road/Grass/ModedLandGrass1.png",
     player: "Assets/Cars/ModedYellow Car1.png",
-    car2: "Assets/Cars/car_yellow_1.png",
-    car3: "Assets/Cars/car_black_1.png",
+    car2: "Assets/Cars/ModedRedCar1.png",
+    car3: "Assets/Cars/ModedBlackCar1.png",
   };
 
   function loadImage(src) {
@@ -236,24 +236,29 @@ html, body {
   const V_W = 540;
   const V_H = 960;
 
+  // ===== 3 LANE SYSTEM =====
+  const LANES = 3;
+  const roadWidth = Math.floor(V_W * 0.64);
+  const laneW = Math.floor(roadWidth / LANES);
   const road = {
-    x: Math.floor(V_W * 0.18),
+    x: Math.floor((V_W - (laneW * LANES)) / 2),
     y: 0,
-    w: Math.floor(V_W * 0.64),
+    w: laneW * LANES,
     h: V_H,
   };
 
-  // ===== 3 LANE SYSTEM =====
-  const LANES = 3;
-
   function computeLaneCenters() {
-    const innerPad = Math.floor(road.w * 0.04);
-    const usableW = road.w - (innerPad * 2);
     return Array.from({ length: LANES }, (_, i) =>
-      road.x + innerPad + (usableW * (i + 0.5)) / LANES
+      road.x + (laneW * (i + 0.5))
+    );
+  }
+  function computeLaneDividers() {
+    return Array.from({ length: LANES - 1 }, (_, i) =>
+      road.x + (laneW * (i + 1))
     );
   }
   let laneCenters = computeLaneCenters();
+  let laneDividers = computeLaneDividers();
 
 
   const state = {
@@ -420,8 +425,8 @@ html, body {
 
   function spawnObstacle() {
   const choices = [
-    { img: imgs.car2, w: 65, h: 110, type: "car" }, //Obstacles Size
-    { img: imgs.car3, w: 65, h: 110, type: "car" },
+    { img: imgs.car2, w: 80, h: 150, type: "car" }, //Obstacles Size
+    { img: imgs.car3, w: 80, h: 150, type: "car" },
   ];
   const pick = choices[(Math.random() * choices.length) | 0];
 
@@ -490,6 +495,12 @@ html, body {
     const startY = y - (offsetY % tileH) - tileH;
     for (let yy = startY; yy < y + h + tileH; yy += tileH) {
       ctx.drawImage(img, x, yy, w, tileH);
+    }
+  }
+  function drawRoadInLanes(img, offsetY) {
+    for (let i = 0; i < LANES; i++) {
+      const x = road.x + (laneW * i);
+      drawTiledYScaled(img, x, 0, laneW, V_H, offsetY);
     }
   }
 
@@ -571,7 +582,21 @@ html, body {
   function render() {
     drawTiled(imgs.roadEdge, 0, 0, road.x, V_H, -state.scrollY * 0.6);
     drawTiled(imgs.roadEdge, road.x + road.w, 0, V_W - (road.x + road.w), V_H, -state.scrollY * 0.6);
-    drawTiledYScaled(imgs.road, road.x, 0, road.w, V_H, -state.scrollY);
+    drawRoadInLanes(imgs.road, -state.scrollY);
+
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([28, 26]);
+    ctx.lineDashOffset = -(state.scrollY * 0.6);
+    for (const x of laneDividers) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, V_H);
+      ctx.stroke();
+    }
+    ctx.restore();
 
     ctx.globalAlpha = 0.25;
     ctx.fillStyle = "#ffffff";
@@ -610,6 +635,7 @@ html, body {
   ]).then(([roadImg, edgeImg, playerImg, car2Img, car3Img]) => {
     imgs = { road: roadImg, roadEdge: edgeImg, player: playerImg, car2: car2Img, car3: car3Img };
     laneCenters = computeLaneCenters();
+    laneDividers = computeLaneDividers();
     requestAnimationFrame((t) => { state.tPrev = t; requestAnimationFrame(loop); });
   }).catch(err => {
     overlayTitle.textContent = "ASSET LOAD ERROR";
