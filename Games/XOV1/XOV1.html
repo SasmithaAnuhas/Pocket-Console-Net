@@ -192,7 +192,7 @@
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-database.js";
   import {
     getFirestore, doc, setDoc, getDoc, updateDoc, deleteDoc,
-    collection, onSnapshot, query, where, serverTimestamp as fsTimestamp
+    collection, onSnapshot, query, where, getDocs, serverTimestamp as fsTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
   // Firebase config
@@ -345,6 +345,23 @@
     if (invitesUnsub) invitesUnsub(), invitesUnsub = null;
     if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
     if (roomUnsub) roomUnsub(), roomUnsub = null;
+  }
+
+  async function clearMyPendingInvites(){
+    if (!me) return;
+    try {
+      const q = query(
+        collection(fs, "gameInvites"),
+        where("fromUid", "==", me.uid),
+        where("status", "==", "pending")
+      );
+      const snap = await getDocs(q);
+      const deletes = [];
+      snap.forEach((d) => deletes.push(deleteDoc(d.ref)));
+      await Promise.all(deletes);
+    } catch (e) {
+      console.error("[Invite cleanup]", e);
+    }
   }
 
   // ---------- Friends list (Firestore) + presence (RTDB) ----------
@@ -761,7 +778,13 @@
 
   $("btnSignOut").addEventListener("click", async () => {
     if (!firebaseEnabled) return;
+    await clearMyPendingInvites();
     await signOut(auth);
+  });
+
+  window.addEventListener("beforeunload", () => {
+    // Best-effort cleanup of my pending invites when leaving the page
+    clearMyPendingInvites();
   });
 
   // ---------- Auth state ----------
