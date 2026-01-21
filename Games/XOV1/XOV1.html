@@ -357,9 +357,14 @@
         where("status", "==", "pending")
       );
       const snapFrom = await getDocs(qFrom);
+      const updates = [];
       const deletes = [];
-      snapFrom.forEach((d) => deletes.push(deleteDoc(d.ref)));
-      await Promise.all(deletes);
+      snapFrom.forEach((d) => {
+        updates.push(updateDoc(d.ref, { status: "cancelled", updatedAt: fsTimestamp() }));
+        deletes.push(deleteDoc(d.ref));
+      });
+      await Promise.allSettled(updates);
+      await Promise.allSettled(deletes);
     } catch (e) {
       console.error("[Invite cleanup]", e);
     }
