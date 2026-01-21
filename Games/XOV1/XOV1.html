@@ -538,15 +538,17 @@
   async function sendInviteFs(toUid, toName){
     if (!me) return;
 
-    // Pre-check mutual friendship to avoid rule failures
-    const mineRef = doc(fs, `users/${me.uid}/friends/${toUid}`);
-    const theirsRef = doc(fs, `users/${toUid}/friends/${me.uid}`);
-    const [mineSnap, theirsSnap] = await Promise.all([
-      getDoc(mineRef),
-      getDoc(theirsRef)
-    ]);
-    if (!mineSnap.exists() || !theirsSnap.exists()){
-      setInviteMsg("Invite blocked: you must be mutual friends first.");
+    // Pre-check my side only (can't read their friends doc with current rules)
+    try {
+      const mineRef = doc(fs, `users/${me.uid}/friends/${toUid}`);
+      const mineSnap = await getDoc(mineRef);
+      if (!mineSnap.exists()){
+        setInviteMsg("Invite blocked: add them as a friend first.");
+        return;
+      }
+    } catch (e) {
+      console.error("[Invite precheck]", e);
+      setInviteMsg("Invite check failed. Try again.");
       return;
     }
 
