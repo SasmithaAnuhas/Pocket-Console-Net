@@ -576,6 +576,11 @@
         }
       }
 
+      await Promise.allSettled([
+        deleteDoc(doc(fs, `users/${me.uid}/friends/${fromUid}`)),
+        deleteDoc(doc(fs, `users/${fromUid}/friends/${me.uid}`))
+      ]);
+
       const batch = writeBatch(fs);
 
       // add to my friends
@@ -585,7 +590,7 @@
         displayName: other.displayName || "User",
         photoURL: other.photoURL || null,
         createdAt: serverTimestamp()
-      }, { merge: true });
+      }, { merge: false });
 
       // add to their friends
       batch.set(doc(fs, `users/${fromUid}/friends/${me.uid}`), {
@@ -594,7 +599,7 @@
         displayName: myProfile.displayName || "User",
         photoURL: myProfile.photoURL || null,
         createdAt: serverTimestamp()
-      }, { merge: true });
+      }, { merge: false });
 
       // delete request (and any reverse stale request)
       batch.delete(reqRef);
