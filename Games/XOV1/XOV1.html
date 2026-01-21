@@ -379,20 +379,29 @@
   let invitesUnsub = null;
   let inviteWatchUnsub = null;
   let roomUnsub = null;
+  let presenceUnsubs = [];
 
   function cleanupOnlineSubs(){
     if (friendsUnsub) friendsUnsub(), friendsUnsub = null;
     if (invitesUnsub) invitesUnsub(), invitesUnsub = null;
     if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
     if (roomUnsub) roomUnsub(), roomUnsub = null;
+    if (presenceUnsubs.length){
+      presenceUnsubs.forEach((u) => u());
+      presenceUnsubs = [];
+    }
   }
 
   // ---------- Friends list (Firestore) + presence (RTDB) ----------
   async function subscribeFriends(){
     const listEl = $("friendsList");
-    listEl.innerHTML = `<div class="muted">Loading friends…</div>`;
+    listEl.innerHTML = `<div class="muted">Loading friends...</div>`;
 
     if (friendsUnsub) friendsUnsub();
+    if (presenceUnsubs.length){
+      presenceUnsubs.forEach((u) => u());
+      presenceUnsubs = [];
+    }
 
     const friendsCol = collection(fs, "users", me.uid, "friends");
     friendsUnsub = onSnapshot(friendsCol, async (snap) => {
@@ -403,58 +412,78 @@
         return;
       }
 
-      const rows = [];
-      for (const fuid of friendUids){
-        // Optional profile read (nice names)
+      const friendState = new Map();
+      const profiles = await Promise.all(friendUids.map(async (fuid) => {
         let nameFromFs = "";
-        const prof = await getDoc(doc(fs, "users", fuid));
-        if (prof.exists()){
-          const d = prof.data();
-          nameFromFs = d.displayName || d.name || "";
+        try {
+          const prof = await getDoc(doc(fs, "users", fuid));
+          if (prof.exists()){
+            const d = prof.data();
+            nameFromFs = d.displayName || d.name || "";
+          }
+        } catch {}
+        const row = { uid: fuid, name: nameFromFs || fuid.slice(0,6), online: false };
+        friendState.set(fuid, row);
+        return row;
+      }));
+
+      const renderFriends = () => {
+        listEl.innerHTML = "";
+        const rows = Array.from(friendState.values());
+        rows.sort((a,b) => Number(b.online)-Number(a.online) || a.name.localeCompare(b.name));
+        for (const r of rows){
+          const item = document.createElement("div");
+          item.className = "item";
+
+          const left = document.createElement("div");
+          left.innerHTML = `<div style="font-weight:700;">${escapeHtml(r.name)}</div>
+                            <div class="muted">${r.uid}</div>`;
+
+          const right = document.createElement("div");
+          right.className = "twoBtns";
+
+          const badge = document.createElement("span");
+          badge.className = `badge ${r.online ? "ok" : "err"}`;
+          badge.textContent = r.online ? "Online" : "Offline";
+
+          const btn = document.createElement("button");
+          btn.textContent = "Invite";
+          btn.disabled = !r.online || !!currentRoomId;
+          btn.addEventListener("click", () => sendInviteFs(r.uid, r.name));
+
+          right.appendChild(badge);
+          right.appendChild(btn);
+
+          item.appendChild(left);
+          item.appendChild(right);
+          listEl.appendChild(item);
         }
+      };
 
-        // RTDB presence
-        const st = await get(ref(db, `status/${fuid}`));
-        const val = st.val();
-        const online = !!(val && val.online);
+      renderFriends();
 
-        rows.push({ uid: fuid, name: nameFromFs || val?.name || fuid.slice(0,6), online });
+      if (presenceUnsubs.length){
+        presenceUnsubs.forEach((u) => u());
+        presenceUnsubs = [];
       }
-
-      listEl.innerHTML = "";
-      rows.sort((a,b) => Number(b.online)-Number(a.online) || a.name.localeCompare(b.name));
-
-      for (const r of rows){
-        const item = document.createElement("div");
-        item.className = "item";
-
-        const left = document.createElement("div");
-        left.innerHTML = `<div style="font-weight:700;">${escapeHtml(r.name)}</div>
-                          <div class="muted">${r.uid}</div>`;
-
-        const right = document.createElement("div");
-        right.className = "twoBtns";
-
-        const badge = document.createElement("span");
-        badge.className = `badge ${r.online ? "ok" : "err"}`;
-        badge.textContent = r.online ? "Online" : "Offline";
-
-        const btn = document.createElement("button");
-        btn.textContent = "Invite";
-        btn.disabled = !r.online || !!currentRoomId;
-        btn.addEventListener("click", () => sendInviteFs(r.uid, r.name));
-
-        right.appendChild(badge);
-        right.appendChild(btn);
-
-        item.appendChild(left);
-        item.appendChild(right);
-        listEl.appendChild(item);
+      for (const row of profiles){
+        const statusRef = ref(db, `status/${row.uid}`);
+        const unsub = onValue(statusRef, (snap2) => {
+          const val = snap2.val();
+          row.online = !!(val && val.online);
+          if (val?.name && (!row.name || row.name === row.uid.slice(0,6))){
+            row.name = val.name;
+          }
+          renderFriends();
+        });
+        presenceUnsubs.push(unsub);
       }
+    }, (err) => {
+      console.error("[Friends]", err);
+      listEl.innerHTML = `<div class="muted">Failed to load friends. Check Firestore rules.</div>`;
     });
   }
-
-  // ---------- Invites (Firestore) ----------
+// ---------- Invites (Firestore) ----------
   function subscribeInvites(){
     const listEl = $("invitesList");
     listEl.innerHTML = `<div class="muted">Waiting for invites…</div>`;
@@ -513,18 +542,23 @@
     const inviteRef = doc(fs, "gameInvites", inviteId);
 
     const roomId = newRoomId();
-    await setDoc(inviteRef, {
-      fromUid: me.uid,
-      toUid,
-      fromName: me.name || "Player",
-      status: "pending",
-      roomId,
-      createdAt: fsTimestamp(),
-      updatedAt: fsTimestamp()
-    });
+    try {
+      await setDoc(inviteRef, {
+        fromUid: me.uid,
+        toUid,
+        fromName: me.name || "Player",
+        status: "pending",
+        roomId,
+        createdAt: fsTimestamp(),
+        updatedAt: fsTimestamp()
+      });
 
-    setInviteMsg(`Invite sent to ${toName}. Waiting for accept...`);
-    watchInviteResult(inviteId);
+      setInviteMsg(`Invite sent to ${toName}. Waiting for accept...`);
+      watchInviteResult(inviteId);
+    } catch (e) {
+      console.error("[Invite]", e);
+      setInviteMsg("Invite failed. Check your permissions/rules.");
+    }
   }
 
   function watchInviteResult(inviteId){
@@ -546,6 +580,9 @@
         if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
         setInviteMsg("Invite cancelled.");
       }
+    }, (err) => {
+      console.error("[Invites]", err);
+      listEl.innerHTML = `<div class="muted">Failed to load invites. Check Firestore rules.</div>`;
     });
   }
 
@@ -869,4 +906,5 @@
 </script>
 </body>
 </html>
+
 
