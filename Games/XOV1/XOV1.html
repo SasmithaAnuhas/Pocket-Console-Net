@@ -69,7 +69,6 @@
       color: #c7d4e6;
     }
     .noticeText{ font-weight: 600; color: #e8eef6; }
-    .noticeText.emphasis{ font-size: 18px; letter-spacing: 0.2px; }
     .playerActive{
       border-color: #00ffcc;
       box-shadow: 0 0 0 1px rgba(0,255,204,0.18) inset;
@@ -182,6 +181,7 @@
           </div>
           <div class="twoBtns">
             <button id="btnLeave" class="warn">Leave</button>
+            <button id="btnRematch" disabled>Rematch</button>
           </div>
         </div>
 
@@ -646,6 +646,7 @@
     showView("room");
     setInviteMsg("");
     $("roomLine").textContent = `Room: ${roomId}`;
+    $("btnRematch").disabled = true;
     $("matchMsg").textContent = "";
     $("onlineEndBox").classList.add("hidden");
 
@@ -656,6 +657,7 @@
     roomUnsub = onSnapshot(roomRef, async (snap) => {
       if (!snap.exists()){
         $("matchMsg").textContent = "Room ended.";
+        $("btnRematch").disabled = true;
         return;
       }
 
@@ -680,17 +682,10 @@
       if (endBox){
         const showEnd = status === "ended";
         endBox.classList.toggle("hidden", !showEnd);
-        const endText = $("onlineEndText");
         if (showEnd){
-          const myOutcome =
-            winner === "draw" ? "Draw. Play again!" :
-            winner ? (winner === mySymbol ? "You won!" : "You lost. Try again!") :
-            "Match ended.";
-          endText.textContent = myOutcome;
-          endText.classList.add("emphasis");
-        } else {
-          endText.textContent = "Match ended.";
-          endText.classList.remove("emphasis");
+          $("onlineEndText").textContent =
+            winner === "draw" ? "Draw." :
+            winner ? `${winner} wins.` : "Match ended.";
         }
       }
 
@@ -720,12 +715,7 @@
         }
       }
 
-      if (status === "ended" && room.endedReason) {
-        setStatus("Friend offline or left the game.");
-        currentRoomId = null;
-        if (roomUnsub) roomUnsub(), roomUnsub = null;
-        showView("menu");
-      }
+      $("btnRematch").disabled = (status !== "ended");
     });
   }
 
@@ -785,24 +775,45 @@
     }
     if (roomUnsub) roomUnsub(), roomUnsub = null;
     currentRoomId = null;
-    setStatus("You left the game.");
-    showView("menu");
+    showView("online");
   });
 
-  // Play again (immediate reset)
-  async function playAgainNow(){
+  // Rematch (two votes)
+  $("btnRematch").addEventListener("click", async () => {
     if (!currentRoomId || !me) return;
+
     const roomRef = doc(fs, "gameRooms", currentRoomId);
-    await updateDoc(roomRef, {
-      status: "playing",
-      board: Array(9).fill(""),
-      turn: "X",
-      winner: "",
-      endedReason: "",
-      updatedAt: fsTimestamp()
-    });
-    $("matchMsg").textContent = "New match started.";
-  }
+    const voteRef = doc(fs, "gameRooms", currentRoomId, "rematchVotes", me.uid);
+
+    await setDoc(voteRef, { vote: true, at: fsTimestamp() });
+
+    const roomSnap = await getDoc(roomRef);
+    if (!roomSnap.exists()) return;
+    const room = roomSnap.data();
+    const a = room.players?.X;
+    const b = room.players?.O;
+
+    const aVote = await getDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", a));
+    const bVote = await getDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", b));
+
+    if (aVote.exists() && bVote.exists()){
+      await updateDoc(roomRef, {
+        status: "playing",
+        board: Array(9).fill(""),
+        turn: "X",
+        winner: "",
+        endedReason: "",
+        updatedAt: fsTimestamp()
+      });
+
+      await deleteDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", a));
+      await deleteDoc(doc(fs, "gameRooms", currentRoomId, "rematchVotes", b));
+
+      $("matchMsg").textContent = "Rematch started.";
+    } else {
+      $("matchMsg").textContent = "Rematch requested. Waiting for friend...";
+    }
+  });
 // ---------- Navigation ----------
   $("btnBack").addEventListener("click", () => {
     if (!views.room.classList.contains("hidden")){
@@ -817,7 +828,7 @@
     resetOffline();
   });
   $("onlinePlayAgain").addEventListener("click", () => {
-    playAgainNow();
+    $("btnRematch").click();
   });
 
   $("startOnline").addEventListener("click", async () => {
@@ -914,6 +925,7 @@
 </script>
 </body>
 </html>
+
 
 
 
