@@ -47,6 +47,22 @@
       color:#ffe0b5;
       background:#2a2112;
     }
+    .winNotice{
+      background:#13221a;
+      border:1px solid #4fd487;
+      color:#c9f7db;
+      padding:8px 10px;
+      border-radius:10px;
+      font-weight:700;
+    }
+    .drawNotice{
+      background:#1f2230;
+      border:1px solid #7aa2ff;
+      color:#dbe6ff;
+      padding:8px 10px;
+      border-radius:10px;
+      font-weight:700;
+    }
     .grid{
       display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:12px;
       width:min(360px, 100%);
@@ -91,7 +107,6 @@
       <div class="twoBtns">
         <button class="pill" id="btnBack" disabled>Back</button>
         <button class="pill" id="btnSignIn">Sign in</button>
-        <button class="pill hidden" id="btnSignOut">Sign out</button>
       </div>
     </header>
 
@@ -205,7 +220,7 @@
   // Firebase v10+ modules (Auth + Firestore + RTDB presence)
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import {
-    getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+    getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
   import {
     getDatabase, ref, set, get, update, onValue, serverTimestamp, onDisconnect
@@ -282,7 +297,10 @@
   function renderOffline(){
     $("offlineTurn").textContent = offline.ended ? "Game Over" : `Turn: ${offline.turn}`;
     const win = winnerOf(offline.board);
-    $("offlineMsg").textContent = win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
+    const msg = win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
+    $("offlineMsg").textContent = msg;
+    $("offlineMsg").classList.toggle("winNotice", !!win && win !== "draw");
+    $("offlineMsg").classList.toggle("drawNotice", win === "draw");
   }
 
   buildBoard($("offlineBoard"), (i) => {
@@ -655,11 +673,14 @@
         $("matchInfo").classList.add("endedNotice");
         $("btnRematch").classList.add("ctaGlow");
         $("matchMsg").textContent = room.endedReason || "";
+        $("matchMsg").classList.toggle("winNotice", !!winner && winner !== "draw");
+        $("matchMsg").classList.toggle("drawNotice", winner === "draw");
       } else {
         $("matchInfo").textContent = `Turn: ${turn} - You are ${mySymbol || "?"}`;
         $("matchInfo").classList.remove("endedNotice");
         $("btnRematch").classList.remove("ctaGlow");
         $("matchMsg").textContent = "";
+        $("matchMsg").classList.remove("winNotice", "drawNotice");
       }
 
       [...$("onlineBoard").children].forEach((c, idx) => c.textContent = board[idx] || "");
@@ -838,12 +859,6 @@
     await signInWithPopup(auth, provider);
   });
 
-  $("btnSignOut").addEventListener("click", async () => {
-    if (!firebaseEnabled) return;
-    await clearMyPendingInvites();
-    await signOut(auth);
-  });
-
   window.addEventListener("beforeunload", () => {
     // Best-effort cleanup of my pending invites when leaving the page
     clearMyPendingInvites();
@@ -852,7 +867,6 @@
   // ---------- Auth state ----------
   if (!firebaseEnabled){
     $("btnSignIn").disabled = true;
-    $("btnSignOut").classList.add("hidden");
     $("startOnline").disabled = true;
     $("onlineHint").textContent = "Online mode disabled (Firebase not configured).";
     setStatus("Offline mode only");
@@ -866,7 +880,6 @@
         me = null;
         setStatus("Not signed in");
         $("btnSignIn").classList.remove("hidden");
-        $("btnSignOut").classList.add("hidden");
         $("presenceBadge").textContent = "Offline";
         $("presenceBadge").className = "badge err";
         showView("menu");
@@ -882,7 +895,6 @@
       $("displayName").value = me.name;
       setStatus(`Signed in as ${me.name}`);
       $("btnSignIn").classList.add("hidden");
-      $("btnSignOut").classList.remove("hidden");
 
       await writePresenceOnline(me.uid, me.name);
 
