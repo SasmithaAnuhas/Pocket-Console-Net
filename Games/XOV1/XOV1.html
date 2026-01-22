@@ -227,9 +227,6 @@
     }[c]));
   }
 
-  function chatIdFor(a, b){
-    return (a < b) ? (a + "_" + b) : (b + "_" + a);
-  }
   function newRoomId(){
     return "room_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
   }
@@ -492,11 +489,26 @@
   async function sendInviteFs(toUid, toName){
     if (!me) return;
 
-    const inviteId = chatIdFor(me.uid, toUid);
-    const inviteRef = doc(fs, "gameInvites", inviteId);
-
     const roomId = newRoomId();
     try {
+      // Cancel any pending invites to the same friend to avoid conflicts.
+      const qExisting = query(
+        collection(fs, "gameInvites"),
+        where("fromUid", "==", me.uid),
+        where("toUid", "==", toUid),
+        where("status", "==", "pending")
+      );
+      const snapExisting = await getDocs(qExisting);
+      const updates = [];
+      const deletes = [];
+      snapExisting.forEach((d) => {
+        updates.push(updateDoc(d.ref, { status: "cancelled", updatedAt: fsTimestamp() }));
+        deletes.push(deleteDoc(d.ref));
+      });
+      await Promise.allSettled(updates);
+      await Promise.allSettled(deletes);
+
+      const inviteRef = doc(collection(fs, "gameInvites"));
       await setDoc(inviteRef, {
         fromUid: me.uid,
         toUid,
@@ -508,7 +520,7 @@
       });
 
       alert(`Invite sent to ${toName}. Waiting for accept...`);
-      watchInviteResult(inviteId);
+      watchInviteResult(inviteRef.id);
     } catch (e) {
       console.error("[Invite]", e);
       setStatus("Invite failed. Make sure the friend accepted your request.");
