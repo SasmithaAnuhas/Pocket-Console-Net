@@ -19,6 +19,7 @@
       padding:14px 16px; display:flex; gap:12px; align-items:center; justify-content:space-between;
       border-bottom:1px solid #223044; background:rgba(255,255,255,.02);
     }
+    header > div:first-child{ min-width:0; }
     .brand{ font-weight:700; letter-spacing:.3px; }
     .row{ display:flex; gap:16px; padding:16px; flex-wrap:wrap; }
     .card{
@@ -62,6 +63,12 @@
     .item{
       display:flex; align-items:center; justify-content:space-between; gap:10px;
       padding:10px; border-radius:12px; border:1px solid #223044; background:#0b111a;
+    }
+    .item > div:first-child{ min-width:0; }
+    .item > div:first-child div,
+    #pX, #pO,
+    #statusLine{
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     }
     .badge{ font-size:12px; padding:3px 8px; border-radius:999px; border:1px solid #2a3f59; }
     .ok{ border-color:#2d5; }
@@ -271,11 +278,17 @@
   const offline = { board: Array(9).fill(""), turn: "X", ended: false };
 
   function renderOffline(){
-    $("offlineTurn").textContent = offline.ended ? "Game Over" : `Turn: ${offline.turn}`;
+    $("offlineTurn").textContent = offline.ended ? "Match ended." : `Turn: ${offline.turn}`;
     const win = winnerOf(offline.board);
     const msg = win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
-    $("offlineMsg").textContent = msg;
-    $("offlineMsg").classList.toggle("endedNotice", !!win);
+    if (win){
+      $("offlineTurn").textContent = `Match ended - ${msg}`;
+      $("offlineTurn").classList.add("endedNotice");
+      $("offlineMsg").textContent = "";
+    } else {
+      $("offlineTurn").classList.remove("endedNotice");
+      $("offlineMsg").textContent = "";
+    }
   }
 
   buildBoard($("offlineBoard"), (i) => {
