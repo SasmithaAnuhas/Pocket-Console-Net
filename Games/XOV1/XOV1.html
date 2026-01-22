@@ -631,8 +631,13 @@
       updatedAt: fsTimestamp()
     });
 
-    await deleteDoc(doc(fs, "gameInvites", inviteId));
+    // Join immediately; cleanup can fail due to rules.
     joinRoomFs(roomId);
+    try {
+      await deleteDoc(doc(fs, "gameInvites", inviteId));
+    } catch (e) {
+      console.warn("[Invite cleanup]", e);
+    }
   }
 
   async function rejectInviteFs(inviteId){
@@ -640,7 +645,11 @@
       status: "rejected",
       updatedAt: fsTimestamp()
     });
-    await deleteDoc(doc(fs, "gameInvites", inviteId));
+    try {
+      await deleteDoc(doc(fs, "gameInvites", inviteId));
+    } catch (e) {
+      console.warn("[Invite cleanup]", e);
+    }
   }
 
   // ---------- Room (Firestore realtime) ----------
