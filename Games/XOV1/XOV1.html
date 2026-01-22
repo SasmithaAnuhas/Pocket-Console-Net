@@ -41,6 +41,7 @@
       padding:8px 10px;
       border-radius:10px;
       font-weight:700;
+      display:inline-block;
     }
     .ctaGlow{
       border-color:#e3a23b;
@@ -181,9 +182,9 @@
           </div>
         </div>
 
+        <div class="muted" style="margin-top:10px;" id="matchMsg"></div>
         <div class="muted" style="margin-top:10px;" id="matchInfo">-</div>
         <div class="grid" id="onlineBoard"></div>
-        <div class="muted" style="margin-top:10px;" id="matchMsg"></div>
       </div>
 
       <div class="card">
@@ -237,7 +238,10 @@
     views[name].classList.remove("hidden");
     $("btnBack").disabled = (name === "menu");
   }
-  function setStatus(text){ $("statusLine").textContent = text; }
+  function setStatus(text){
+    $("statusLine").textContent = text;
+    $("statusLine").classList.remove("endedNotice");
+  }
 
   function escapeHtml(s){
     return (s||"").replace(/[&<>"']/g, (c) => ({
@@ -692,12 +696,18 @@
         $("btnRematch").classList.add("ctaGlow");
         $("matchMsg").textContent = room.endedReason || "";
         $("matchMsg").classList.toggle("endedNotice", !!(room.endedReason));
+        if (room.endedReason && /left|disconnected/i.test(room.endedReason)){
+          setStatus(room.endedReason);
+          $("statusLine").classList.add("endedNotice");
+          showView("menu");
+        }
       } else {
         $("matchInfo").textContent = `Turn: ${turn} - You are ${mySymbol || "?"}`;
         $("matchInfo").classList.remove("endedNotice");
         $("btnRematch").classList.remove("ctaGlow");
         $("matchMsg").textContent = "";
         $("matchMsg").classList.remove("endedNotice");
+        $("statusLine").classList.remove("endedNotice");
       }
 
       [...$("onlineBoard").children].forEach((c, idx) => c.textContent = board[idx] || "");
