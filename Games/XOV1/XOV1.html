@@ -242,6 +242,11 @@
     $("statusLine").textContent = text;
     $("statusLine").classList.remove("endedNotice");
   }
+  function resetAllInviteButtons(){
+    const buttons = $("friendsList")?.querySelectorAll("button");
+    if (!buttons) return;
+    buttons.forEach((b) => resetInviteButton(b));
+  }
 
   function escapeHtml(s){
     return (s||"").replace(/[&<>"']/g, (c) => ({
@@ -700,6 +705,7 @@
           setStatus(room.endedReason);
           $("statusLine").classList.add("endedNotice");
           showView("menu");
+          resetAllInviteButtons();
         }
       } else {
         $("matchInfo").textContent = `Turn: ${turn} - You are ${mySymbol || "?"}`;
@@ -795,6 +801,7 @@
     if (roomUnsub) roomUnsub(), roomUnsub = null;
     currentRoomId = null;
     showView("online");
+    resetAllInviteButtons();
   });
 
   // Rematch (two votes)
