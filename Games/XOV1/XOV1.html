@@ -59,6 +59,12 @@
       background:#0b111a; color:#e8eef6; border:1px solid #223044;
       padding:10px 12px; border-radius:12px; width:100%;
     }
+    @media (max-width: 720px){
+      header{ flex-direction:column; align-items:flex-start; gap:8px; }
+      .twoBtns{ width:100%; justify-content:flex-start; }
+      .row{ padding:12px; }
+      .card{ flex:1 1 100%; min-width:0; }
+    }
   </style>
 </head>
 <body>
@@ -336,12 +342,17 @@
   let invitesUnsub = null;
   let inviteWatchUnsub = null;
   let roomUnsub = null;
+  let presenceUnsubs = [];
 
   function cleanupOnlineSubs(){
     if (friendsUnsub) friendsUnsub(), friendsUnsub = null;
     if (invitesUnsub) invitesUnsub(), invitesUnsub = null;
     if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
     if (roomUnsub) roomUnsub(), roomUnsub = null;
+    if (presenceUnsubs.length){
+      presenceUnsubs.forEach((u) => u && u());
+      presenceUnsubs = [];
+    }
   }
 
   async function clearMyPendingInvites(){
@@ -393,11 +404,10 @@
           nameFromFs = d.displayName || d.name || "";
         }
 
-        // RTDB presence
+        // Initial presence (RTDB)
         const st = await get(ref(db, `status/${fuid}`));
         const val = st.val();
         const online = !!(val && val.state === "online");
-
         rows.push({ uid: fuid, name: nameFromFs || val?.name || fuid.slice(0,6), online });
       }
 
@@ -430,6 +440,16 @@
         item.appendChild(left);
         item.appendChild(right);
         listEl.appendChild(item);
+
+        const presenceRef = ref(db, `status/${r.uid}`);
+        const unsub = onValue(presenceRef, (snapPresence) => {
+          const p = snapPresence.val();
+          const isOnline = !!(p && p.state === "online");
+          badge.className = `badge ${isOnline ? "ok" : "err"}`;
+          badge.textContent = isOnline ? "Online" : "Offline";
+          btn.disabled = !isOnline || !!currentRoomId;
+        });
+        presenceUnsubs.push(unsub);
       }
     });
   }
@@ -642,6 +662,9 @@
         }
       }
 
+      if (status === "playing"){
+        $("matchMsg").textContent = "";
+      }
       $("btnRematch").disabled = (status !== "ended");
     });
   }
