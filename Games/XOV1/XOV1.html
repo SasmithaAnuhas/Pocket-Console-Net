@@ -33,6 +33,20 @@
     button:disabled{ opacity:.55; cursor:not-allowed; }
     .pill{ padding:7px 10px; border-radius:999px; font-size:13px; }
     .muted{ color:#9db0c7; font-size:13px; }
+    .endedNotice{
+      background:#2a1b0f;
+      border:1px solid #e3a23b;
+      color:#ffd9a6;
+      padding:8px 10px;
+      border-radius:10px;
+      font-weight:700;
+    }
+    .ctaGlow{
+      border-color:#e3a23b;
+      box-shadow:0 0 0 2px rgba(227,162,59,.25);
+      color:#ffe0b5;
+      background:#2a2112;
+    }
     .grid{
       display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:12px;
       width:min(360px, 100%);
@@ -632,11 +646,21 @@
       const mySymbol = (players.X === me.uid) ? "X" : (players.O === me.uid ? "O" : "");
       const oppUid = (mySymbol === "X") ? players.O : players.X;
 
-      $("matchInfo").textContent =
-        status === "ended" ? "Match ended." :
-        winner === "draw" ? "Draw." :
-        winner ? `${winner} wins.` :
-        `Turn: ${turn} - You are ${mySymbol || "?"}`;
+      if (status === "ended"){
+        const winLine =
+          winner === "draw" ? "Draw." :
+          winner ? `${winner} wins.` :
+          "Match ended.";
+        $("matchInfo").textContent = `Match ended - ${winLine}`;
+        $("matchInfo").classList.add("endedNotice");
+        $("btnRematch").classList.add("ctaGlow");
+        $("matchMsg").textContent = room.endedReason || "";
+      } else {
+        $("matchInfo").textContent = `Turn: ${turn} - You are ${mySymbol || "?"}`;
+        $("matchInfo").classList.remove("endedNotice");
+        $("btnRematch").classList.remove("ctaGlow");
+        $("matchMsg").textContent = "";
+      }
 
       [...$("onlineBoard").children].forEach((c, idx) => c.textContent = board[idx] || "");
 
@@ -662,9 +686,6 @@
         }
       }
 
-      if (status === "playing"){
-        $("matchMsg").textContent = "";
-      }
       $("btnRematch").disabled = (status !== "ended");
     });
   }
