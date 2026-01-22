@@ -47,22 +47,6 @@
       color:#ffe0b5;
       background:#2a2112;
     }
-    .winNotice{
-      background:#13221a;
-      border:1px solid #4fd487;
-      color:#c9f7db;
-      padding:8px 10px;
-      border-radius:10px;
-      font-weight:700;
-    }
-    .drawNotice{
-      background:#1f2230;
-      border:1px solid #7aa2ff;
-      color:#dbe6ff;
-      padding:8px 10px;
-      border-radius:10px;
-      font-weight:700;
-    }
     .grid{
       display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:12px;
       width:min(360px, 100%);
@@ -160,14 +144,6 @@
             <div class="muted">Friends online</div>
           </div>
           <span class="badge err" id="presenceBadge">Offline</span>
-        </div>
-
-        <div style="margin-top:10px;">
-          <label class="muted">Your display name</label>
-          <input id="displayName" placeholder="Type your name (shown to friends)" />
-          <div class="twoBtns" style="margin-top:10px;">
-            <button id="saveName">Save</button>
-          </div>
         </div>
 
         <div class="list" id="friendsList"></div>
@@ -299,8 +275,7 @@
     const win = winnerOf(offline.board);
     const msg = win === "draw" ? "Draw." : (win ? `${win} wins.` : "");
     $("offlineMsg").textContent = msg;
-    $("offlineMsg").classList.toggle("winNotice", !!win && win !== "draw");
-    $("offlineMsg").classList.toggle("drawNotice", win === "draw");
+    $("offlineMsg").classList.toggle("endedNotice", !!win);
   }
 
   buildBoard($("offlineBoard"), (i) => {
@@ -673,14 +648,13 @@
         $("matchInfo").classList.add("endedNotice");
         $("btnRematch").classList.add("ctaGlow");
         $("matchMsg").textContent = room.endedReason || "";
-        $("matchMsg").classList.toggle("winNotice", !!winner && winner !== "draw");
-        $("matchMsg").classList.toggle("drawNotice", winner === "draw");
+        $("matchMsg").classList.toggle("endedNotice", !!(room.endedReason));
       } else {
         $("matchInfo").textContent = `Turn: ${turn} - You are ${mySymbol || "?"}`;
         $("matchInfo").classList.remove("endedNotice");
         $("btnRematch").classList.remove("ctaGlow");
         $("matchMsg").textContent = "";
-        $("matchMsg").classList.remove("winNotice", "drawNotice");
+        $("matchMsg").classList.remove("endedNotice");
       }
 
       [...$("onlineBoard").children].forEach((c, idx) => c.textContent = board[idx] || "");
@@ -834,24 +808,6 @@
     showView("online");
   });
 
-  // ---------- Name handling ----------
-  $("saveName").addEventListener("click", async () => {
-    if (!me) return;
-    const name = $("displayName").value.trim().slice(0, 24);
-    me.name = name || me.name || "Player";
-
-    // RTDB presence name
-    await update(ref(db, `status/${me.uid}`), { name: me.name });
-
-    // Optional: store in Firestore profile (helps friend list names)
-    try {
-      await setDoc(doc(fs, "users", me.uid), { displayName: me.name }, { merge: true });
-    } catch {}
-
-    setStatus(`Signed in as ${me.name}`);
-    alert("Name saved.");
-  });
-
   // ---------- Auth ----------
   $("btnSignIn").addEventListener("click", async () => {
     if (!firebaseEnabled) return;
@@ -892,7 +848,6 @@
       const saved = await loadMyNameFromPresence(me.uid);
       if (saved) me.name = saved;
 
-      $("displayName").value = me.name;
       setStatus(`Signed in as ${me.name}`);
       $("btnSignIn").classList.add("hidden");
 
