@@ -452,7 +452,7 @@
         const btn = document.createElement("button");
         btn.textContent = "Invite";
         btn.disabled = !r.online || !!currentRoomId;
-        btn.addEventListener("click", () => sendInviteFs(r.uid, r.name));
+        btn.addEventListener("click", () => sendInviteFs(r.uid, r.name, btn));
 
         right.appendChild(badge);
         right.appendChild(btn);
@@ -465,9 +465,11 @@
         const unsub = onValue(presenceRef, (snapPresence) => {
           const p = snapPresence.val();
           const isOnline = !!(p && p.state === "online");
+          const inviteSent = btn.dataset.inviteState === "sent";
           badge.className = `badge ${isOnline ? "ok" : "err"}`;
           badge.textContent = isOnline ? "Online" : "Offline";
-          btn.disabled = !isOnline || !!currentRoomId;
+          btn.disabled = !isOnline || !!currentRoomId || inviteSent;
+          if (!inviteSent) btn.textContent = "Invite";
         });
         presenceUnsubs.push(unsub);
       }
@@ -526,7 +528,14 @@
     });
   }
 
-  async function sendInviteFs(toUid, toName){
+  function resetInviteButton(btn){
+    if (!btn) return;
+    btn.dataset.inviteState = "";
+    btn.textContent = "Invite";
+    btn.disabled = !!currentRoomId;
+  }
+
+  async function sendInviteFs(toUid, toName, btn){
     if (!me) return;
 
     const roomId = newRoomId();
@@ -559,31 +568,41 @@
         updatedAt: fsTimestamp()
       });
 
-      alert(`Invite sent to ${toName}. Waiting for accept...`);
-      watchInviteResult(inviteRef.id);
+      if (btn){
+        btn.dataset.inviteState = "sent";
+        btn.textContent = "Invitation sent";
+        btn.disabled = true;
+      }
+      watchInviteResult(inviteRef.id, () => resetInviteButton(btn));
     } catch (e) {
       console.error("[Invite]", e);
       setStatus("Invite failed. Make sure the friend accepted your request.");
+      resetInviteButton(btn);
     }
   }
 
-  function watchInviteResult(inviteId){
+  function watchInviteResult(inviteId, onResolve){
     if (inviteWatchUnsub) inviteWatchUnsub();
 
     const inviteRef = doc(fs, "gameInvites", inviteId);
     inviteWatchUnsub = onSnapshot(inviteRef, (snap) => {
-      if (!snap.exists()) return;
+      if (!snap.exists()){
+        if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
+        if (onResolve) onResolve();
+        return;
+      }
       const inv = snap.data();
 
       if (inv.status === "accepted" && inv.roomId){
         if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
+        if (onResolve) onResolve();
         joinRoomFs(inv.roomId);
       } else if (inv.status === "rejected"){
         if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
-        alert("Invite rejected.");
+        if (onResolve) onResolve();
       } else if (inv.status === "cancelled"){
         if (inviteWatchUnsub) inviteWatchUnsub(), inviteWatchUnsub = null;
-        alert("Invite cancelled.");
+        if (onResolve) onResolve();
       }
     });
   }
@@ -612,6 +631,7 @@
       updatedAt: fsTimestamp()
     });
 
+    await deleteDoc(doc(fs, "gameInvites", inviteId));
     joinRoomFs(roomId);
   }
 
@@ -620,6 +640,7 @@
       status: "rejected",
       updatedAt: fsTimestamp()
     });
+    await deleteDoc(doc(fs, "gameInvites", inviteId));
   }
 
   // ---------- Room (Firestore realtime) ----------
