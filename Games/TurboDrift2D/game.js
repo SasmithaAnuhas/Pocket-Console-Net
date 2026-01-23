@@ -613,6 +613,7 @@
     pedalH: 140,
     pedalGap: 18,
     stickOffsetY: 120,
+    stickOffsetX: 30,
   };
   const ui = { ...uiBase };
   const steeringStick = new Joystick("steer", ui.margin, 720 - ui.stickOffsetY, ui.stickRadius, "x");
@@ -671,11 +672,12 @@
     ui.pedalH = Math.round(uiBase.pedalH * uiScaleFactor);
     ui.pedalGap = Math.round(uiBase.pedalGap * uiScaleFactor);
     ui.stickOffsetY = Math.round(uiBase.stickOffsetY * uiScaleFactor);
+    ui.stickOffsetX = Math.round(uiBase.stickOffsetX * uiScaleFactor);
   };
 
   const updateJoystickAnchors = () => {
     updateUiLayout();
-    steeringStick.anchorX = ui.margin;
+    steeringStick.anchorX = ui.margin + ui.stickOffsetX;
     steeringStick.anchorY = uiViewportHeight - ui.stickOffsetY;
     pedals.accel.w = ui.pedalW;
     pedals.accel.h = ui.pedalH;
@@ -928,7 +930,7 @@
 
   const updatePhysics = (dt) => {
     if (!gameState.started || countdownActive) return;
-    const steeringInput = keys.left || keys.right ? (keys.left ? -1 : 1) : -steeringStick.valueX;
+    const steeringInput = keys.left || keys.right ? (keys.left ? -1 : 1) : steeringStick.valueX;
     const throttleInput = (keys.up ? 1 : 0) + (keys.down ? -1 : 0) + (pedals.accel.pressed ? 1 : 0) - (pedals.brake.pressed ? 1 : 0);
     const throttle = clamp(throttleInput, -1, 1);
 
@@ -1223,6 +1225,8 @@
     if (mobCount <= 0) return;
     const useTrack = trackLength > 0;
     const useCheckpoints = aiCheckpoints.length > 0;
+    const aiBaseSpeed = 160;
+    const aiStepSpeed = 20;
     for (let i = 0; i < mobCount; i++) {
       const aiImage = assets.images.aiCars.length
         ? assets.images.aiCars[i % assets.images.aiCars.length]
@@ -1236,7 +1240,7 @@
           y: spawn.y,
           angle: spawn.angle,
           t: spawnT,
-          speed: 90 + i * 15,
+          speed: aiBaseSpeed + i * aiStepSpeed,
           useTrack: useTrackFromSpawn,
           radius: car.radius,
           checkpointIndex: 0,
@@ -1247,7 +1251,7 @@
       } else if (useTrack) {
         aiCars.push({
           t: i / mobCount,
-          speed: 90 + i * 15,
+          speed: aiBaseSpeed + i * aiStepSpeed,
           useTrack: true,
           radius: car.radius,
           checkpointIndex: 0,
@@ -1262,7 +1266,7 @@
           y: first.y,
           angle: 0,
           t: 0,
-          speed: 90 + i * 15,
+          speed: aiBaseSpeed + i * aiStepSpeed,
           useTrack: false,
           radius: car.radius,
           checkpointIndex: 0,
