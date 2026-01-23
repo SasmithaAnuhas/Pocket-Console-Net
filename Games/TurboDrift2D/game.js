@@ -236,6 +236,7 @@
       const newTileLayers = [];
       const newAISpawns = [];
       const newAICheckpoints = [];
+      const newMapCheckpoints = [];
       for (const layer of layers) {
         if (layer.type === "tilelayer") {
           const decoded = await decodeLayerData(layer);
@@ -265,7 +266,6 @@
         }
 
         const newObstacles = [];
-        const newCheckpoints = [];
         let foundObjects = false;
 
         for (const obj of objects) {
@@ -311,6 +311,7 @@
             if (typeof obj.rotation === "number") {
               car.angle = degToRad(obj.rotation);
             }
+            startSpawn = { x: car.x, y: car.y, angle: car.angle };
           } else if (/^checkpoint\d+$/.test(name)) {
             const idx = parseInt(name.replace("checkpoint", ""), 10);
             if (!Number.isNaN(idx)) {
@@ -320,6 +321,21 @@
                 y: (obj.y || 0) + (obj.height || 0) / 2,
               });
             }
+            foundObjects = true;
+            hasMapObjects = true;
+            const x1 = obj.x || 0;
+            const y1 = obj.y || 0;
+            const w = obj.width || 0;
+            const h = obj.height || 0;
+            const x2 = x1 + w;
+            const y2 = y1 + h;
+            newMapCheckpoints.push({
+              index: Number.isNaN(idx) ? newMapCheckpoints.length : idx,
+              x1,
+              y1,
+              x2,
+              y2,
+            });
           } else if (nameCompact === "tracklimitbox" || nameCompact === "tracklimit" || nameCompact === "tracklimit2") {
             foundObjects = true;
             hasMapObjects = true;
@@ -357,7 +373,8 @@
               const baseY = obj.y || 0;
               const p0 = obj.polyline[0];
               const p1 = obj.polyline[obj.polyline.length - 1];
-              newCheckpoints.push({
+              newMapCheckpoints.push({
+                index: newMapCheckpoints.length,
                 x1: baseX + p0.x,
                 y1: baseY + p0.y,
                 x2: baseX + p1.x,
@@ -368,7 +385,13 @@
               const y1 = obj.y || 0;
               const x2 = x1 + (obj.width || 0);
               const y2 = y1 + (obj.height || 0);
-              newCheckpoints.push({ x1, y1, x2, y2 });
+              newMapCheckpoints.push({
+                index: newMapCheckpoints.length,
+                x1,
+                y1,
+                x2,
+                y2,
+              });
             }
           }
         }
@@ -378,11 +401,15 @@
             obstacles = newObstacles;
             hasMapObstacles = true;
           }
-          if (newCheckpoints.length) {
-            checkpoints = newCheckpoints;
+          if (newMapCheckpoints.length) {
+            checkpoints = newMapCheckpoints
+              .slice()
+              .sort((a, b) => a.index - b.index)
+              .map(({ x1, y1, x2, y2 }) => ({ x1, y1, x2, y2 }));
             hasMapCheckpoints = true;
           }
           currentCheckpoint = 0;
+          lastCheckpointIndex = -1;
         }
       }
       if (newTiles.length) tiledTrackTiles = newTiles;
@@ -399,6 +426,7 @@
         hasMapObstacles = false;
         hasMapCheckpoints = false;
         currentCheckpoint = 0;
+        lastCheckpointIndex = -1;
       }
     } catch {
       // no map.json or invalid JSON
@@ -543,6 +571,7 @@
   ];
   let hasMapObstacles = false;
   let hasMapCheckpoints = false;
+  let startSpawn = { x: car.x, y: car.y, angle: car.angle };
   let aiSpawnPoints = [];
   let aiCars = [];
   let aiCheckpoints = [];
@@ -551,6 +580,7 @@
   let trackLength = 0;
 
   let currentCheckpoint = 0;
+  let lastCheckpointIndex = -1;
   let lap = 1;
   let lastX = car.x;
   let lastY = car.y;
@@ -857,6 +887,45 @@
     return t >= 0 && t <= 1 && u >= 0 && u <= 1;
   };
 
+  const getCheckpointSpawn = (index) => {
+    const cp = checkpoints[index];
+    if (!cp) return null;
+    const mx = (cp.x1 + cp.x2) / 2;
+    const my = (cp.y1 + cp.y2) / 2;
+    const lineAngle = Math.atan2(cp.y2 - cp.y1, cp.x2 - cp.x1);
+    const trackAngle = lineAngle + Math.PI / 2;
+    const backOffset = 30;
+    return {
+      x: mx - Math.cos(trackAngle) * backOffset,
+      y: my - Math.sin(trackAngle) * backOffset,
+      angle: trackAngle,
+    };
+  };
+
+  const respawnToCheckpoint = (index) => {
+    const spawn = index >= 0 ? getCheckpointSpawn(index) : null;
+    const target = spawn || startSpawn;
+    if (!target) return;
+    car.x = target.x;
+    car.y = target.y;
+    if (index >= 0 && checkpoints.length) {
+      const nextIndex = (index + 1) % checkpoints.length;
+      const next = checkpoints[nextIndex];
+      if (next) {
+        const nx = (next.x1 + next.x2) / 2;
+        const ny = (next.y1 + next.y2) / 2;
+        car.angle = Math.atan2(ny - car.y, nx - car.x);
+      } else {
+        car.angle = target.angle;
+      }
+    } else {
+      car.angle = target.angle;
+    }
+    car.speed = 0;
+    lastX = car.x;
+    lastY = car.y;
+  };
+
   const updatePhysics = (dt) => {
     if (!gameState.started || countdownActive) return;
     const steeringInput = keys.left || keys.right ? (keys.left ? -1 : 1) : -steeringStick.valueX;
@@ -944,12 +1013,24 @@
     }
 
     if (checkpoints.length) {
-      const cp = checkpoints[currentCheckpoint % checkpoints.length];
-      if (segmentIntersect(lastX, lastY, car.x, car.y, cp.x1, cp.y1, cp.x2, cp.y2)) {
-        currentCheckpoint += 1;
-        if (currentCheckpoint >= checkpoints.length) {
-          currentCheckpoint = 0;
-          lap += 1;
+      let crossedIndex = -1;
+      for (let i = 0; i < checkpoints.length; i++) {
+        const cp = checkpoints[i];
+        if (segmentIntersect(lastX, lastY, car.x, car.y, cp.x1, cp.y1, cp.x2, cp.y2)) {
+          crossedIndex = i;
+          break;
+        }
+      }
+      if (crossedIndex !== -1) {
+        if (crossedIndex === currentCheckpoint) {
+          lastCheckpointIndex = crossedIndex;
+          currentCheckpoint += 1;
+          if (currentCheckpoint >= checkpoints.length) {
+            currentCheckpoint = 0;
+            lap += 1;
+          }
+        } else if (crossedIndex > currentCheckpoint) {
+          respawnToCheckpoint(lastCheckpointIndex);
         }
       }
     }
@@ -1548,6 +1629,10 @@
     } else {
       ctx.fillText(`Lap: ${lap}`, 20, 62);
     }
+    if (checkpoints.length) {
+      const passed = Math.max(0, Math.min(checkpoints.length, lastCheckpointIndex + 1));
+      ctx.fillText(`Checkpoint: ${passed}/${checkpoints.length}`, 20, 122);
+    }
     ctx.restore();
     if (countdownActive && countdownLabel) {
       ctx.save();
@@ -1764,6 +1849,10 @@
       resize();
       updateJoystickAnchors();
 
+      lap = 1;
+      currentCheckpoint = 0;
+      lastCheckpointIndex = -1;
+      respawnToCheckpoint(-1);
       timerStart = null;
       lastElapsed = 0;
       countdownActive = true;
