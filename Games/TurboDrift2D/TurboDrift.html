@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+    <title>Top-Down Racing</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #0b0b0b;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+        #menuOverlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.75);
+            color: #fff;
+            font-family: system-ui, sans-serif;
+            z-index: 20;
+        }
+        .menu-panel {
+            width: min(520px, 92vw);
+            background: rgba(15, 15, 15, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .menu-title {
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0 0 16px 0;
+        }
+        .menu-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .menu-row label {
+            width: 120px;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .menu-row select {
+            flex: 1;
+            padding: 8px 10px;
+            background: #111;
+            color: #fff;
+            border: 1px solid #333;
+            border-radius: 8px;
+        }
+        .menu-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .menu-btn {
+            flex: 1;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #222;
+            color: #fff;
+            cursor: pointer;
+        }
+        .menu-btn.primary {
+            background: #ff8c1a;
+            border-color: #ff8c1a;
+            color: #111;
+            font-weight: 600;
+        }
+        .menu-btn.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <div id="menuOverlay">
+        <div id="menuMain" class="menu-panel">
+            <div class="menu-title">Top-Down Racing</div>
+            <div class="menu-actions">
+                <button id="btnSingle" class="menu-btn primary">Single Player</button>
+                <button class="menu-btn disabled" disabled>Multiplayer (soon)</button>
+            </div>
+        </div>
+        <div id="menuSingle" class="menu-panel hidden">
+            <div class="menu-title">Single Player</div>
+            <div class="menu-row">
+                <label for="selectCar">Car</label>
+                <select id="selectCar"></select>
+            </div>
+            <div class="menu-row">
+                <label for="selectMode">Game Mode</label>
+                <select id="selectMode"></select>
+            </div>
+            <div class="menu-row">
+                <label for="selectMap">Map</label>
+                <select id="selectMap"></select>
+            </div>
+            <div class="menu-actions">
+                <button id="btnBack" class="menu-btn">Back</button>
+                <button id="btnStart" class="menu-btn primary">Start</button>
+            </div>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
