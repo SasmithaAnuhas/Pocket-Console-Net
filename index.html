@@ -728,79 +728,28 @@
       if (!featured) return;
       const first = featured.querySelector(".tile");
       const cardW = first ? (first.getBoundingClientRect().width + 14) : 320;
-      featured.scrollBy({ left: dir * cardW, behavior: "smooth" });
+      const maxScroll = featured.scrollWidth - featured.clientWidth;
+      if (dir > 0 && featured.scrollLeft >= maxScroll - 2) {
+        featured.scrollTo({ left: 0, behavior: "smooth" });
+      } else if (dir < 0 && featured.scrollLeft <= 2) {
+        featured.scrollTo({ left: maxScroll, behavior: "smooth" });
+      } else {
+        featured.scrollBy({ left: dir * cardW, behavior: "smooth" });
+      }
     }
 
     leftBtn?.addEventListener("click", () => scrollByCard(-1));
     rightBtn?.addEventListener("click", () => scrollByCard(1));
 
-    // Auto-scroll featured carousel tab by tab
+    // Auto-scroll featured carousel tab by tab (simulate right button)
     const prefersReducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const AUTO_SCROLL_MS = 3500;
-    let autoScrollTimer = null;
-    let resumeTimer = null;
+    const AUTO_SCROLL_MS = 4000;
 
-    function stopAutoScroll() {
-      if (autoScrollTimer) {
-        clearInterval(autoScrollTimer);
-        autoScrollTimer = null;
-      }
-    }
-
-    function startAutoScroll() {
-      if (!featured || prefersReducedMotion) return;
-      stopAutoScroll();
-      autoScrollTimer = setInterval(() => {
-        const first = featured.querySelector(".tile");
-        const cardW = first ? (first.getBoundingClientRect().width + 14) : 320;
-        const maxScroll = featured.scrollWidth - featured.clientWidth;
-        if (maxScroll <= 0) return;
-
-        const nextLeft = featured.scrollLeft + cardW;
-        if (nextLeft >= maxScroll - 2) {
-          featured.scrollTo({ left: 0, behavior: "smooth" });
-        } else {
-          featured.scrollBy({ left: cardW, behavior: "smooth" });
-        }
+    if (!prefersReducedMotion && rightBtn) {
+      setInterval(() => {
+        rightBtn.click();
       }, AUTO_SCROLL_MS);
     }
-
-    function scheduleResume() {
-      if (prefersReducedMotion) return;
-      if (resumeTimer) clearTimeout(resumeTimer);
-      resumeTimer = setTimeout(startAutoScroll, 4000);
-    }
-
-    if (featured) {
-      featured.addEventListener("pointerenter", stopAutoScroll);
-      featured.addEventListener("pointerleave", scheduleResume);
-      featured.addEventListener("focusin", stopAutoScroll);
-      featured.addEventListener("focusout", scheduleResume);
-      featured.addEventListener("touchstart", stopAutoScroll, { passive: true });
-      featured.addEventListener("scroll", () => {
-        stopAutoScroll();
-        scheduleResume();
-      });
-    }
-
-    leftBtn?.addEventListener("click", () => {
-      stopAutoScroll();
-      scheduleResume();
-    });
-    rightBtn?.addEventListener("click", () => {
-      stopAutoScroll();
-      scheduleResume();
-    });
-
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) {
-        stopAutoScroll();
-      } else {
-        scheduleResume();
-      }
-    });
-
-    startAutoScroll();
 
     // Hover tilt (desktop only)
     const tiles = Array.from(document.querySelectorAll(".tile, .gameCard"));
