@@ -608,12 +608,12 @@
 
   const uiBase = {
     margin: 120,
-    stickRadius: 70,
+    stickRadius: 62,
     pedalW: 90,
     pedalH: 140,
     pedalGap: 18,
-    stickOffsetY: 120,
-    stickOffsetX: 30,
+    stickOffsetY: 140,
+    stickOffsetX: 45,
   };
   const ui = { ...uiBase };
   const steeringStick = new Joystick("steer", ui.margin, 720 - ui.stickOffsetY, ui.stickRadius, "x");
