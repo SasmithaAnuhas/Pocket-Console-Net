@@ -5,6 +5,10 @@
   let worldHeight = 720;
   const CANVAS = document.getElementById("game");
   const CTX = CANVAS.getContext("2d");
+  const loadingOverlay = document.getElementById("loadingOverlay");
+  const loadingBar = document.getElementById("loadingBar");
+  const loadingText = document.getElementById("loadingText");
+  const rotateOverlay = document.getElementById("rotateOverlay");
 
   const ASSETS = {
     car: "assets/cars/car_red_small_4.png",
@@ -39,6 +43,41 @@
       const img = new Image();
       img.onload = () => resolve(img);
       img.onerror = () => resolve(null);
+      img.src = src;
+    });
+
+  const setLoadingProgress = (value, label) => {
+    if (loadingBar) loadingBar.style.width = `${Math.round(value * 100)}%`;
+    if (loadingText && label) loadingText.textContent = label;
+  };
+
+  const isPortrait = () => window.innerHeight > window.innerWidth;
+
+  const updateRotateOverlay = () => {
+    if (!rotateOverlay) return;
+    const shouldShow = isPortrait();
+    rotateOverlay.classList.toggle("hidden", !shouldShow);
+  };
+
+  const requestFullscreen = async () => {
+    const root = document.documentElement;
+    if (!root || document.fullscreenElement) return;
+    try {
+      if (root.requestFullscreen) await root.requestFullscreen();
+    } catch {
+      // ignore: fullscreen can fail without user gesture or on unsupported devices
+    }
+  };
+
+  const loadImageTracked = (src, onDone) =>
+    new Promise((resolve) => {
+      const img = new Image();
+      const done = () => {
+        if (typeof onDone === "function") onDone();
+        resolve(img.complete && img.naturalWidth ? img : null);
+      };
+      img.onload = done;
+      img.onerror = done;
       img.src = src;
     });
 
@@ -537,14 +576,16 @@
   const maxZoom = startZoom;
   const zoomLerpSpeed = 5;
 
-  const ui = {
+  const uiBase = {
     margin: 120,
     stickRadius: 70,
     pedalW: 90,
     pedalH: 140,
     pedalGap: 18,
+    stickOffsetY: 120,
   };
-  const steeringStick = new Joystick("steer", ui.margin, 720 - 120, ui.stickRadius, "x");
+  const ui = { ...uiBase };
+  const steeringStick = new Joystick("steer", ui.margin, 720 - ui.stickOffsetY, ui.stickRadius, "x");
   const pedals = {
     accel: { x: 0, y: 0, w: ui.pedalW, h: ui.pedalH, pressed: false },
     brake: { x: 0, y: 0, w: ui.pedalW, h: ui.pedalH, pressed: false },
@@ -591,19 +632,41 @@
 
   const pointerMap = new Map();
 
+  const updateUiLayout = () => {
+    const minDim = Math.min(uiViewportWidth, uiViewportHeight);
+    const uiScaleFactor = clamp(minDim / 720, 0.55, 1);
+    ui.margin = Math.round(uiBase.margin * uiScaleFactor);
+    ui.stickRadius = Math.round(uiBase.stickRadius * uiScaleFactor);
+    ui.pedalW = Math.round(uiBase.pedalW * uiScaleFactor);
+    ui.pedalH = Math.round(uiBase.pedalH * uiScaleFactor);
+    ui.pedalGap = Math.round(uiBase.pedalGap * uiScaleFactor);
+    ui.stickOffsetY = Math.round(uiBase.stickOffsetY * uiScaleFactor);
+  };
+
   const updateJoystickAnchors = () => {
+    updateUiLayout();
     steeringStick.anchorX = ui.margin;
-    steeringStick.anchorY = uiViewportHeight - 120;
+    steeringStick.anchorY = uiViewportHeight - ui.stickOffsetY;
     pedals.accel.w = ui.pedalW;
     pedals.accel.h = ui.pedalH;
     pedals.brake.w = ui.pedalW;
     pedals.brake.h = ui.pedalH;
-    const rightX = uiViewportWidth - ui.margin - ui.pedalW;
     const baseY = uiViewportHeight - ui.margin - ui.pedalH;
-    pedals.brake.x = rightX;
-    pedals.brake.y = baseY;
-    pedals.accel.x = rightX;
-    pedals.accel.y = baseY - ui.pedalH - ui.pedalGap;
+    const stackedTop = baseY - ui.pedalH - ui.pedalGap;
+    if (stackedTop < ui.margin) {
+      const totalW = ui.pedalW * 2 + ui.pedalGap;
+      const leftX = uiViewportWidth - ui.margin - totalW;
+      pedals.brake.x = leftX;
+      pedals.brake.y = baseY;
+      pedals.accel.x = leftX + ui.pedalW + ui.pedalGap;
+      pedals.accel.y = baseY;
+    } else {
+      const rightX = uiViewportWidth - ui.margin - ui.pedalW;
+      pedals.brake.x = rightX;
+      pedals.brake.y = baseY;
+      pedals.accel.x = rightX;
+      pedals.accel.y = baseY - ui.pedalH - ui.pedalGap;
+    }
     steeringStick.end();
     pedals.accel.pressed = false;
     pedals.brake.pressed = false;
@@ -704,9 +767,11 @@
     uiOffsetX = 0;
     uiOffsetY = 0;
     updateCamera();
+    updateRotateOverlay();
   };
 
   window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", updateRotateOverlay);
   resize();
   updateJoystickAnchors();
 
@@ -1583,17 +1648,31 @@
   };
 
   const init = async () => {
-    const images = await Promise.all([
-      loadImage(ASSETS.car),
-      loadImage(ASSETS.obstacle),
-      loadImage(ASSETS.wall),
-      loadImage(ASSETS.checkpoint),
-      loadImage(ASSETS.ground),
-      loadImage(ASSETS.road),
-      loadImage(ASSETS.borderRed),
-      loadImage(ASSETS.borderWhite),
-    ]);
-    const carImages = await Promise.all(CAR_OPTIONS.map((c) => loadImage(c.path)));
+    const assetImages = [
+      ASSETS.car,
+      ASSETS.obstacle,
+      ASSETS.wall,
+      ASSETS.checkpoint,
+      ASSETS.ground,
+      ASSETS.road,
+      ASSETS.borderRed,
+      ASSETS.borderWhite,
+    ];
+    const carImagesSources = CAR_OPTIONS.map((c) => c.path);
+    const totalSteps = assetImages.length + carImagesSources.length + 1;
+    let doneSteps = 0;
+    const tick = (label) => {
+      doneSteps += 1;
+      setLoadingProgress(doneSteps / totalSteps, label);
+    };
+
+    setLoadingProgress(0, "Starting up");
+    const images = await Promise.all(
+      assetImages.map((src) => loadImageTracked(src, () => tick(`Loading ${src.split("/").pop()}`)))
+    );
+    const carImages = await Promise.all(
+      carImagesSources.map((src) => loadImageTracked(src, () => tick(`Loading ${src.split("/").pop()}`)))
+    );
 
     assets.images.car = images[0];
     assets.images.obstacle = images[1];
@@ -1610,10 +1689,13 @@
     });
     selectAICarImages(gameState.selectedCar.id);
 
+    tick(`Loading ${gameState.selectedMap.file}`);
     await loadTiledMap(gameState.selectedMap.file);
     buildTrackSegments();
     resize();
     updateJoystickAnchors();
+    setLoadingProgress(1, "Loaded");
+    if (loadingOverlay) loadingOverlay.classList.add("hidden");
   };
 
   const setupMenu = () => {
@@ -1659,10 +1741,14 @@
     selectMode.value = gameState.selectedMode.id;
     selectMap.value = gameState.selectedMap.id;
 
+    menuOverlay.classList.remove("hidden");
     btnSingle.addEventListener("click", showSingle);
     btnBack.addEventListener("click", showMain);
 
     btnStart.addEventListener("click", async () => {
+      updateRotateOverlay();
+      if (isPortrait()) return;
+      await requestFullscreen();
       gameState.selectedCar = CAR_OPTIONS.find((c) => c.id === selectCar.value) || CAR_OPTIONS[0];
       gameState.selectedMode = MODE_OPTIONS.find((m) => m.id === selectMode.value) || MODE_OPTIONS[0];
       gameState.selectedMap = MAP_OPTIONS.find((m) => m.id === selectMap.value) || MAP_OPTIONS[0];
