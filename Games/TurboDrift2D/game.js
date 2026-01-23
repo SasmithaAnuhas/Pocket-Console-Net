@@ -7,7 +7,7 @@
   const CTX = CANVAS.getContext("2d");
 
   const ASSETS = {
-    car: "kenney_racing-pack/PNG/Cars/car_red_small_4.png",
+    car: "assets/cars/car_red_small_4.png",
     obstacle: "kenney_racing-pack/PNG/Objects/cone_straight.png",
     wall: "assets/wall.png",
     checkpoint: "assets/checkpoint.png",
@@ -53,10 +53,10 @@
   };
 
   const CAR_OPTIONS = [
-    { id: "red", label: "Red", path: "kenney_racing-pack/PNG/Cars/car_red_small_4.png" },
-    { id: "blue", label: "Blue", path: "kenney_racing-pack/PNG/Cars/car_blue_small_4.png" },
-    { id: "green", label: "Green", path: "kenney_racing-pack/PNG/Cars/car_green_small_4.png" },
-    { id: "yellow", label: "Yellow", path: "kenney_racing-pack/PNG/Cars/car_yellow_small_4.png" },
+    { id: "red", label: "Red", path: "assets/cars/car_red_small_4.png" },
+    { id: "blue", label: "Blue", path: "assets/cars/car_blue_small_4.png" },
+    { id: "green", label: "Green", path: "assets/cars/car_green_small_4.png" },
+    { id: "yellow", label: "Yellow", path: "assets/cars/car_yellow_small_4.png" },
   ];
 
   const MODE_OPTIONS = [
