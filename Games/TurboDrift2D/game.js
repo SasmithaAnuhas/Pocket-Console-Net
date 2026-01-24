@@ -9,6 +9,12 @@
   const loadingBar = document.getElementById("loadingBar");
   const loadingText = document.getElementById("loadingText");
   const rotateOverlay = document.getElementById("rotateOverlay");
+  const resultOverlay = document.getElementById("resultOverlay");
+  const resultTitle = document.getElementById("resultTitle");
+  const resultSub = document.getElementById("resultSub");
+  const resultPlace = document.getElementById("resultPlace");
+  const resultTime = document.getElementById("resultTime");
+  const resultBest = document.getElementById("resultBest");
 
   const ASSETS = {
     car: "assets/cars/car_red_small_4.png",
@@ -91,6 +97,29 @@
     }
   };
 
+  const getBestTimeKey = () =>
+    `td2d_bestlap_${gameState.selectedMap.id}_${gameState.selectedMode.id}_${raceLaps}`;
+
+  const getBestTime = () => {
+    try {
+      const raw = localStorage.getItem(getBestTimeKey());
+      const val = raw ? parseInt(raw, 10) : 0;
+      return Number.isFinite(val) && val > 0 ? val : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const setBestTime = (ms) => {
+    if (!ms || !Number.isFinite(ms)) return;
+    const current = getBestTime();
+    if (!current || ms < current) {
+      try {
+        localStorage.setItem(getBestTimeKey(), String(Math.floor(ms)));
+      } catch {}
+    }
+  };
+
   const CAR_OPTIONS = [
     { id: "red", label: "Red", path: "assets/cars/car_red_small_4.png" },
     { id: "blue", label: "Blue", path: "assets/cars/car_blue_small_4.png" },
@@ -114,6 +143,7 @@
     selectedCar: CAR_OPTIONS[0],
     selectedMode: MODE_OPTIONS[0],
     selectedMap: MAP_OPTIONS[0],
+    selectedLaps: 3,
   };
 
   const getObjectProperty = (obj, key) => {
@@ -181,7 +211,11 @@
       const map = await res.json();
       const mapProps = Array.isArray(map.properties) ? map.properties : [];
       const lapProp = mapProps.find((p) => p.name === "laps");
-      if (lapProp && typeof lapProp.value === "number") raceLaps = Math.max(1, Math.floor(lapProp.value));
+      if (lapProp && typeof lapProp.value === "number") {
+        mapLaps = Math.max(1, Math.floor(lapProp.value));
+      } else {
+        mapLaps = null;
+      }
       const layers = Array.isArray(map.layers) ? map.layers : [];
       const tilesets = Array.isArray(map.tilesets) ? map.tilesets : [];
       const tilesetImages = new Map();
@@ -237,6 +271,7 @@
       const newAISpawns = [];
       const newAICheckpoints = [];
       const newMapCheckpoints = [];
+      const newCollisionObstacles = [];
       for (const layer of layers) {
         if (layer.type === "tilelayer") {
           const decoded = await decodeLayerData(layer);
@@ -249,6 +284,28 @@
               opacity: typeof layer.opacity === "number" ? layer.opacity : 1,
               visible: layer.visible !== false,
             });
+            const lname = (layer.name || "").toLowerCase();
+            if (
+              lname.includes("collision") ||
+              lname.includes("collison") ||
+              lname.includes("object")
+            ) {
+              const w = layer.width || 0;
+              const h = layer.height || 0;
+              for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                  const idx = y * w + x;
+                  if (!decoded[idx]) continue;
+                  newCollisionObstacles.push({
+                    x: x * tiledMapTileWidth,
+                    y: y * tiledMapTileHeight,
+                    w: tiledMapTileWidth,
+                    h: tiledMapTileHeight,
+                    isRect: true,
+                  });
+                }
+              }
+            }
           }
           continue;
         }
@@ -265,7 +322,6 @@
           if (typeof w === "number") trackWidth = w;
         }
 
-        const newObstacles = [];
         let foundObjects = false;
 
         for (const obj of objects) {
@@ -336,34 +392,11 @@
               x2,
               y2,
             });
-          } else if (nameCompact === "tracklimitbox" || nameCompact === "tracklimit" || nameCompact === "tracklimit2") {
-            foundObjects = true;
-            hasMapObjects = true;
-            const w = obj.width || 0;
-            const h = obj.height || 0;
-            if (w > 0 && h > 0) {
-              newObstacles.push({
-                x: obj.x || 0,
-                y: obj.y || 0,
-                w,
-                h,
-                isRect: true,
-              });
-            }
           } else if (name === "ai_spawn") {
             newAISpawns.push({
               x: obj.x || 0,
               y: obj.y || 0,
               angle: typeof obj.rotation === "number" ? degToRad(obj.rotation) : 0,
-            });
-          } else if (name === "obstacle") {
-            foundObjects = true;
-            hasMapObjects = true;
-            const r = getObjectProperty(obj, "radius");
-            newObstacles.push({
-              x: obj.x || 0,
-              y: obj.y || 0,
-              r: typeof r === "number" ? r : 18,
             });
           } else if (name === "checkpoint") {
             foundObjects = true;
@@ -397,10 +430,6 @@
         }
 
         if (foundObjects) {
-          if (newObstacles.length) {
-            obstacles = newObstacles;
-            hasMapObstacles = true;
-          }
           if (newMapCheckpoints.length) {
             checkpoints = newMapCheckpoints
               .slice()
@@ -412,14 +441,25 @@
           lastCheckpointIndex = -1;
         }
       }
+      if (newCollisionObstacles.length) {
+        obstacles = newCollisionObstacles;
+        hasMapObstacles = true;
+      }
       if (newTiles.length) tiledTrackTiles = newTiles;
       if (newTileLayers.length) tiledTileLayers = newTileLayers;
       tiledRoadLayers = tiledTileLayers.filter((l) => (l.name || "").toLowerCase().includes("road"));
       tiledGroundLayers = tiledTileLayers.filter((l) => (l.name || "").toLowerCase().includes("ground"));
       aiSpawnPoints = newAISpawns;
-      aiCheckpoints = newAICheckpoints
-        .sort((a, b) => a.index - b.index)
-        .map((p) => ({ x: p.x, y: p.y }));
+      if (checkpoints.length) {
+        aiCheckpoints = checkpoints.map((cp) => ({
+          x: (cp.x1 + cp.x2) / 2,
+          y: (cp.y1 + cp.y2) / 2,
+        }));
+      } else {
+        aiCheckpoints = newAICheckpoints
+          .sort((a, b) => a.index - b.index)
+          .map((p) => ({ x: p.x, y: p.y }));
+      }
       if (tiledTrackTiles.length && !hasMapObjects) {
         obstacles = [];
         checkpoints = [];
@@ -576,12 +616,15 @@
   let aiCars = [];
   let aiCheckpoints = [];
   let raceLaps = 3;
+  let mapLaps = null;
   let trackSegments = [];
   let trackLength = 0;
 
   let currentCheckpoint = 0;
   let lastCheckpointIndex = -1;
   let lap = 1;
+  let raceFinished = false;
+  let lapStartTime = null;
   let lastX = car.x;
   let lastY = car.y;
   let timerStart = null;
@@ -881,12 +924,85 @@
     return { x: (dx / dist) * overlap, y: (dy / dist) * overlap };
   };
 
+  const getCarOBB = (entity) => ({
+    x: entity.x,
+    y: entity.y,
+    angle: entity.angle || 0,
+    halfW: carRenderSize.w * 0.42,
+    halfH: carRenderSize.h * 0.42,
+  });
+
+  const getOBBAxes = (angle) => {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return [
+      { x: c, y: s },
+      { x: -s, y: c },
+    ];
+  };
+
+  const projectOBB = (obb, axis) => {
+    const axes = getOBBAxes(obb.angle);
+    const center = obb.x * axis.x + obb.y * axis.y;
+    const r =
+      obb.halfW * Math.abs(axis.x * axes[0].x + axis.y * axes[0].y) +
+      obb.halfH * Math.abs(axis.x * axes[1].x + axis.y * axes[1].y);
+    return { min: center - r, max: center + r };
+  };
+
+  const obbMTV = (a, b) => {
+    const axes = [...getOBBAxes(a.angle), ...getOBBAxes(b.angle)];
+    let minOverlap = Infinity;
+    let bestAxis = null;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    for (const axis of axes) {
+      const pa = projectOBB(a, axis);
+      const pb = projectOBB(b, axis);
+      const overlap = Math.min(pa.max, pb.max) - Math.max(pa.min, pb.min);
+      if (overlap <= 0) return null;
+      if (overlap < minOverlap) {
+        minOverlap = overlap;
+        bestAxis = axis;
+      }
+    }
+    if (!bestAxis) return null;
+    const dir = dx * bestAxis.x + dy * bestAxis.y;
+    const sign = dir < 0 ? -1 : 1;
+    return { x: bestAxis.x * minOverlap * sign, y: bestAxis.y * minOverlap * sign };
+  };
+
   const segmentIntersect = (x1, y1, x2, y2, x3, y3, x4, y4) => {
     const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
     if (den === 0) return false;
     const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
     const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den;
     return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  };
+
+  const pointInRect = (x, y, rect) =>
+    x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+
+  const segmentIntersectsRect = (x1, y1, x2, y2, rect) => {
+    if (pointInRect(x1, y1, rect) || pointInRect(x2, y2, rect)) return true;
+    const rx1 = rect.x;
+    const ry1 = rect.y;
+    const rx2 = rect.x + rect.w;
+    const ry2 = rect.y + rect.h;
+    return (
+      segmentIntersect(x1, y1, x2, y2, rx1, ry1, rx2, ry1) ||
+      segmentIntersect(x1, y1, x2, y2, rx2, ry1, rx2, ry2) ||
+      segmentIntersect(x1, y1, x2, y2, rx2, ry2, rx1, ry2) ||
+      segmentIntersect(x1, y1, x2, y2, rx1, ry2, rx1, ry1)
+    );
+  };
+
+  const checkpointToRect = (cp) => {
+    const xMin = Math.min(cp.x1, cp.x2);
+    const yMin = Math.min(cp.y1, cp.y2);
+    const xMax = Math.max(cp.x1, cp.x2);
+    const yMax = Math.max(cp.y1, cp.y2);
+    return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
   };
 
   const getCheckpointSpawn = (index) => {
@@ -929,7 +1045,7 @@
   };
 
   const updatePhysics = (dt) => {
-    if (!gameState.started || countdownActive) return;
+    if (!gameState.started || countdownActive || raceFinished) return;
     const steeringInput = keys.left || keys.right ? (keys.left ? -1 : 1) : steeringStick.valueX;
     const throttleInput = (keys.up ? 1 : 0) + (keys.down ? -1 : 0) + (pedals.accel.pressed ? 1 : 0) - (pedals.brake.pressed ? 1 : 0);
     const throttle = clamp(throttleInput, -1, 1);
@@ -992,16 +1108,29 @@
     }
 
     for (const ai of aiCars) {
-      const pos = getAIPosition(ai);
-      if (!pos) continue;
-      const aiCircle = { x: pos.x, y: pos.y, r: car.radius };
-      if (circleCircleCollision(car, aiCircle, car.radius + aiCircle.r)) {
-        const push = resolveCircleCollision(car, aiCircle, car.radius + aiCircle.r);
-        car.x += push.x;
-        car.y += push.y;
-        car.speed *= 0.7;
-        collided = true;
+      const info = getAIPosAngle(ai);
+      if (!info) continue;
+      const aiOBB = getCarOBB(info);
+      const carOBB = getCarOBB(car);
+      const mtv = obbMTV(carOBB, aiOBB);
+      if (!mtv) continue;
+      car.x -= mtv.x * 0.6;
+      car.y -= mtv.y * 0.6;
+      if (ai.useTrack) {
+        ai.x = info.x;
+        ai.y = info.y;
+        ai.angle = info.angle;
+        ai.useTrack = false;
+        ai.bumpTimer = Math.max(ai.bumpTimer || 0, 0.35);
+        ai.x += mtv.x * 0.8;
+        ai.y += mtv.y * 0.8;
+      } else if (typeof ai.x === "number" && typeof ai.y === "number") {
+        ai.x += mtv.x * 0.4;
+        ai.y += mtv.y * 0.4;
       }
+      car.speed *= 0.7;
+      ai.hitSlowTimer = Math.max(ai.hitSlowTimer || 0, 0.35);
+      collided = true;
     }
 
     if (collided && audioUnlocked && audio.ctx && audio.collisionBuffer) {
@@ -1018,7 +1147,8 @@
       let crossedIndex = -1;
       for (let i = 0; i < checkpoints.length; i++) {
         const cp = checkpoints[i];
-        if (segmentIntersect(lastX, lastY, car.x, car.y, cp.x1, cp.y1, cp.x2, cp.y2)) {
+        const rect = checkpointToRect(cp);
+        if (segmentIntersectsRect(lastX, lastY, car.x, car.y, rect)) {
           crossedIndex = i;
           break;
         }
@@ -1030,6 +1160,17 @@
           if (currentCheckpoint >= checkpoints.length) {
             currentCheckpoint = 0;
             lap += 1;
+            const now = performance.now();
+            if (lapStartTime !== null) {
+              const lapElapsed = now - lapStartTime;
+              setBestTime(lapElapsed);
+              lapStartTime = now;
+            }
+            if (lap > raceLaps) {
+              raceFinished = true;
+              const total = (gameState.selectedMode?.mobs || 0) + 1;
+              showRaceResult(true, 1, total, lastElapsed);
+            }
           }
         } else if (crossedIndex > currentCheckpoint) {
           respawnToCheckpoint(lastCheckpointIndex);
@@ -1111,6 +1252,29 @@
     return "none";
   };
 
+  const findRoadDirection = (x, y) => {
+    const samples = [
+      { x: 60, y: 0 },
+      { x: -60, y: 0 },
+      { x: 0, y: 60 },
+      { x: 0, y: -60 },
+      { x: 45, y: 45 },
+      { x: -45, y: 45 },
+      { x: 45, y: -45 },
+      { x: -45, y: -45 },
+    ];
+    let best = null;
+    for (const s of samples) {
+      const sx = x + s.x;
+      const sy = y + s.y;
+      if (getSurfaceAt(sx, sy) === "road") {
+        const dist = Math.hypot(s.x, s.y);
+        if (!best || dist < best.dist) best = { x: s.x, y: s.y, dist };
+      }
+    }
+    return best ? normalize(best.x, best.y) : null;
+  };
+
   const getSurfaceAtAnyLayer = (x, y) => {
     if (!tiledTileLayers.length) return "none";
     const tx = Math.floor(x / tiledMapTileWidth);
@@ -1152,7 +1316,7 @@
 
   const computeAvoidance = (x, y, selfAi) => {
     const avoidRadius = 40;
-    const avoidRadiusAI = 36;
+    const avoidRadiusAI = 60;
     let ax = 0;
     let ay = 0;
     for (const obs of obstacles) {
@@ -1176,8 +1340,8 @@
       const r = (selfAi?.radius || car.radius) + (other.radius || car.radius);
       if (dist > 0 && dist < avoidRadiusAI + r) {
         const strength = 1 - dist / (avoidRadiusAI + r);
-        ax += (dx / dist) * strength * 0.9;
-        ay += (dy / dist) * strength * 0.9;
+        ax += (dx / dist) * strength * 1.2;
+        ay += (dy / dist) * strength * 1.2;
       }
     }
     const dxp = x - car.x;
@@ -1185,8 +1349,8 @@
     const distp = Math.hypot(dxp, dyp);
     if (distp > 0 && distp < avoidRadius + car.radius) {
       const strength = 1 - distp / (avoidRadius + car.radius);
-      ax += (dxp / distp) * strength * 0.6;
-      ay += (dyp / distp) * strength * 0.6;
+      ax += (dxp / distp) * strength * 1.0;
+      ay += (dyp / distp) * strength * 1.0;
     }
     return { x: ax, y: ay };
   };
@@ -1239,25 +1403,43 @@
           x: spawn.x,
           y: spawn.y,
           angle: spawn.angle,
+          turnAngle: spawn.angle,
           t: spawnT,
           speed: aiBaseSpeed + i * aiStepSpeed,
+          baseSpeed: aiBaseSpeed + i * aiStepSpeed,
           useTrack: useTrackFromSpawn,
+          trackMode: useTrackFromSpawn,
           radius: car.radius,
           checkpointIndex: 0,
+          lastCheckpointIndex: -1,
           lap: 1,
           finished: false,
           image: aiImage,
+          lastX: spawn.x,
+          lastY: spawn.y,
+          steerX: 0,
+          steerY: 0,
+          bumpTimer: 0,
+          hitSlowTimer: 0,
         });
       } else if (useTrack) {
         aiCars.push({
           t: i / mobCount,
           speed: aiBaseSpeed + i * aiStepSpeed,
+          baseSpeed: aiBaseSpeed + i * aiStepSpeed,
           useTrack: true,
+          trackMode: true,
           radius: car.radius,
           checkpointIndex: 0,
+          lastCheckpointIndex: -1,
           lap: 1,
           finished: false,
           image: aiImage,
+          turnAngle: 0,
+          steerX: 0,
+          steerY: 0,
+          bumpTimer: 0,
+          hitSlowTimer: 0,
         });
       } else if (useCheckpoints) {
         const first = aiCheckpoints[0];
@@ -1265,14 +1447,24 @@
           x: first.x,
           y: first.y,
           angle: 0,
+          turnAngle: 0,
           t: 0,
           speed: aiBaseSpeed + i * aiStepSpeed,
+          baseSpeed: aiBaseSpeed + i * aiStepSpeed,
           useTrack: false,
+          trackMode: false,
           radius: car.radius,
           checkpointIndex: 0,
+          lastCheckpointIndex: -1,
           lap: 1,
           finished: false,
           image: aiImage,
+          lastX: first.x,
+          lastY: first.y,
+          steerX: 0,
+          steerY: 0,
+          bumpTimer: 0,
+          hitSlowTimer: 0,
         });
       }
     }
@@ -1308,11 +1500,33 @@
     return null;
   };
 
+  const getAIPosAngle = (ai) => {
+    if (ai.useTrack) {
+      const p = sampleTrack(ai.t);
+      if (!p) return null;
+      return { x: p.x, y: p.y, angle: p.angle };
+    }
+    if (typeof ai.x === "number" && typeof ai.y === "number") {
+      return { x: ai.x, y: ai.y, angle: ai.angle || 0 };
+    }
+    return null;
+  };
+
   const updateAICars = (dt) => {
     if (!aiCars.length) return;
-    if (countdownActive) return;
+    if (countdownActive || raceFinished) return;
     for (const ai of aiCars) {
       if (ai.finished) continue;
+      if (ai.hitSlowTimer && ai.hitSlowTimer > 0) {
+        ai.hitSlowTimer = Math.max(0, ai.hitSlowTimer - dt);
+      }
+      if (ai.bumpTimer && ai.bumpTimer > 0) {
+        ai.bumpTimer = Math.max(0, ai.bumpTimer - dt);
+        if (ai.trackMode && ai.bumpTimer === 0) {
+          ai.t = nearestTrackT(ai.x, ai.y);
+          ai.useTrack = true;
+        }
+      }
       let surfacePos = null;
       if (ai.useTrack) {
         surfacePos = sampleTrack(ai.t);
@@ -1321,27 +1535,44 @@
       }
       const aiSurface = surfacePos ? getSurfaceAt(surfacePos.x, surfacePos.y) : "none";
       const aiSpeedFactor = aiSurface === "ground" ? 0.55 : 1;
-      const stepSpeed = ai.speed * aiSpeedFactor;
+      const baseSpeed = Number.isFinite(ai.baseSpeed) ? ai.baseSpeed : ai.speed;
+      const hitSlow = ai.hitSlowTimer > 0 ? 0.7 : 1;
+      const stepSpeed = baseSpeed * hitSlow * aiSpeedFactor;
       if (ai.useTrack) {
         ai.t = (ai.t + (stepSpeed * dt) / Math.max(trackLength, 1)) % 1;
         continue;
       }
       if (!aiCheckpoints.length) continue;
+      ai.lastX = ai.x;
+      ai.lastY = ai.y;
       const target = aiCheckpoints[ai.checkpointIndex % aiCheckpoints.length];
       const dx = target.x - ai.x;
       const dy = target.y - ai.y;
       const targetDist = Math.hypot(dx, dy);
       const avoid = computeAvoidance(ai.x, ai.y, ai);
+      const surfaceHere = getSurfaceAt(ai.x, ai.y);
+      const roadDir = surfaceHere !== "road" ? findRoadDirection(ai.x, ai.y) : null;
       const targetDir = normalize(dx, dy);
       const avoidDir = normalize(avoid.x, avoid.y);
-      const mixX = targetDir.x + avoidDir.x * 1.0;
-      const mixY = targetDir.y + avoidDir.y * 1.0;
+      const roadBias = roadDir ? 1.2 : 0;
+      const avoidBias = 0.6;
+      const mixX = targetDir.x + avoidDir.x * avoidBias + (roadDir ? roadDir.x * roadBias : 0);
+      const mixY = targetDir.y + avoidDir.y * avoidBias + (roadDir ? roadDir.y * roadBias : 0);
       const desiredDir = normalize(mixX, mixY);
-      const desiredAngle = Math.atan2(desiredDir.y, desiredDir.x);
-      const turnRate = 2.4;
-      let angleDiff = desiredAngle - ai.angle;
+      const steerLerp = 0.18;
+      if (!Number.isFinite(ai.steerX) || !Number.isFinite(ai.steerY)) {
+        ai.steerX = desiredDir.x;
+        ai.steerY = desiredDir.y;
+      } else {
+        ai.steerX = lerp(ai.steerX, desiredDir.x, steerLerp);
+        ai.steerY = lerp(ai.steerY, desiredDir.y, steerLerp);
+      }
+      const desiredAngle = Math.atan2(ai.steerY, ai.steerX);
+      const turnRate = 1.8;
+      let angleDiff = desiredAngle - (ai.turnAngle ?? ai.angle);
       angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
-      ai.angle += clamp(angleDiff, -turnRate * dt, turnRate * dt);
+      ai.turnAngle = (ai.turnAngle ?? ai.angle) + clamp(angleDiff, -turnRate * dt, turnRate * dt);
+      ai.angle = ai.turnAngle;
       ai.x += Math.cos(ai.angle) * stepSpeed * dt;
       ai.y += Math.sin(ai.angle) * stepSpeed * dt;
 
@@ -1358,19 +1589,64 @@
           ai.y += push.y;
         }
       }
-      if (circleCircleCollision(ai, car, ai.radius + car.radius)) {
-        const push = resolveCircleCollision(ai, car, ai.radius + car.radius);
-        ai.x += push.x;
-        ai.y += push.y;
+      for (const other of aiCars) {
+        if (other === ai) continue;
+        const aInfo = getAIPosAngle(ai);
+        const bInfo = getAIPosAngle(other);
+        if (!aInfo || !bInfo) continue;
+        const mtv = obbMTV(getCarOBB(aInfo), getCarOBB(bInfo));
+        if (!mtv) continue;
+        if (ai.useTrack) {
+          const sign = mtv.x * Math.cos(aInfo.angle) + mtv.y * Math.sin(aInfo.angle) >= 0 ? 1 : -1;
+          ai.t = (ai.t + sign * 0.006 + 1) % 1;
+        } else if (typeof ai.x === "number" && typeof ai.y === "number") {
+          ai.x -= mtv.x * 0.4;
+          ai.y -= mtv.y * 0.4;
+        }
+        if (other.useTrack) {
+          const sign = mtv.x * Math.cos(bInfo.angle) + mtv.y * Math.sin(bInfo.angle) < 0 ? 1 : -1;
+          other.t = (other.t + sign * 0.006 + 1) % 1;
+        } else if (typeof other.x === "number" && typeof other.y === "number") {
+          other.x += mtv.x * 0.4;
+          other.y += mtv.y * 0.4;
+        }
+        ai.hitSlowTimer = Math.max(ai.hitSlowTimer || 0, 0.2);
+        other.hitSlowTimer = Math.max(other.hitSlowTimer || 0, 0.2);
       }
 
-      if (targetDist < 26) {
-        ai.checkpointIndex += 1;
-        if (ai.checkpointIndex >= aiCheckpoints.length) {
-          ai.checkpointIndex = 0;
-          ai.lap += 1;
-          if (ai.lap > raceLaps) {
-            ai.finished = true;
+      if (checkpoints.length) {
+        const expected = ai.checkpointIndex % checkpoints.length;
+        let crossedIndex = -1;
+        for (let i = 0; i < checkpoints.length; i++) {
+          const cp = checkpoints[i];
+          const rect = checkpointToRect(cp);
+          if (segmentIntersectsRect(ai.lastX, ai.lastY, ai.x, ai.y, rect)) {
+            crossedIndex = i;
+            break;
+          }
+        }
+        if (crossedIndex !== -1) {
+          if (crossedIndex === expected) {
+            ai.lastCheckpointIndex = crossedIndex;
+            ai.checkpointIndex += 1;
+            if (ai.checkpointIndex >= checkpoints.length) {
+              ai.checkpointIndex = 0;
+              ai.lap += 1;
+              if (ai.lap > raceLaps) {
+                ai.finished = true;
+                raceFinished = true;
+                const total = (gameState.selectedMode?.mobs || 0) + 1;
+                showRaceResult(false, 2, total, lastElapsed);
+              }
+            }
+          } else if (crossedIndex > expected) {
+            const backIdx = ai.lastCheckpointIndex >= 0 ? ai.lastCheckpointIndex : 0;
+            const back = aiCheckpoints[backIdx];
+            if (back) {
+              ai.x = back.x;
+              ai.y = back.y;
+              ai.speed *= 0.2;
+            }
           }
         }
       }
@@ -1570,17 +1846,22 @@
   const drawAICars = (ctx) => {
     if (!aiCars.length) return;
     for (const ai of aiCars) {
-      let px = ai.x;
-      let py = ai.y;
       let ang = ai.angle || 0;
       const carImg = ai.image || assets.images.car;
       if (!carImg) continue;
+      let px;
+      let py;
       if (ai.useTrack) {
         const p = sampleTrack(ai.t);
         if (!p) continue;
         px = p.x;
         py = p.y;
         ang = p.angle;
+      } else {
+        const pos = getAIPosition(ai);
+        if (!pos) continue;
+        px = pos.x;
+        py = pos.y;
       }
       if (typeof px !== "number" || typeof py !== "number") continue;
       ctx.save();
@@ -1615,27 +1896,49 @@
 
   const drawHUD = (ctx, elapsed) => {
     ctx.save();
+    const hudX = 12;
+    const hudY = 10;
+    const hudW = 260;
+    const hudLineH = 26;
+    let hudLines = 2;
+    if (gameState.started) {
+      hudLines = gameState.selectedMode.id === "race" ? 3 : 3;
+      if (checkpoints.length) hudLines += 1;
+    }
+    const hudH = 16 + hudLines * hudLineH;
+    ctx.fillStyle = "rgba(10, 10, 12, 0.6)";
+    if (typeof ctx.roundRect === "function") {
+      ctx.beginPath();
+      ctx.roundRect(hudX, hudY, hudW, hudH, 12);
+      ctx.fill();
+    } else {
+      ctx.fillRect(hudX, hudY, hudW, hudH);
+    }
     ctx.fillStyle = "#ffffff";
     ctx.font = "24px sans-serif";
     if (!gameState.started) {
-      ctx.fillText("Ready", 20, 32);
-      ctx.fillText(`Mode: ${gameState.selectedMode.label}`, 20, 62);
+      ctx.fillText("Ready", 24, 36);
+      ctx.fillText(`Mode: ${gameState.selectedMode.label}`, 24, 64);
       ctx.restore();
       return;
     }
-    ctx.fillText(`Mode: ${gameState.selectedMode.label}`, 20, 32);
+    ctx.fillText(`Mode: ${gameState.selectedMode.label}`, 24, 36);
+    const best = getBestTime();
     if (gameState.selectedMode.id === "time_trial") {
-      ctx.fillText(`Time: ${fmtTime(elapsed)}`, 20, 62);
-      ctx.fillText(`Lap: ${lap}`, 20, 92);
+      ctx.fillText(`Time: ${fmtTime(elapsed)}`, 24, 64);
+      ctx.fillText(`Lap: ${lap}`, 24, 92);
     } else if (gameState.selectedMode.id === "race") {
-      ctx.fillText(`Lap: ${lap}`, 20, 62);
-      ctx.fillText(`Opponents: ${gameState.selectedMode.mobs}`, 20, 92);
+      ctx.fillText(`Lap: ${lap}`, 24, 64);
+      ctx.fillText(`Opponents: ${gameState.selectedMode.mobs}`, 24, 92);
     } else {
-      ctx.fillText(`Lap: ${lap}`, 20, 62);
+      ctx.fillText(`Lap: ${lap}`, 24, 64);
+    }
+    if (best) {
+      ctx.fillText(`Best Lap: ${fmtTime(best)}`, 24, 148);
     }
     if (checkpoints.length) {
       const passed = Math.max(0, Math.min(checkpoints.length, lastCheckpointIndex + 1));
-      ctx.fillText(`Checkpoint: ${passed}/${checkpoints.length}`, 20, 122);
+      ctx.fillText(`Checkpoint: ${passed}/${checkpoints.length}`, 24, 120);
     }
     ctx.restore();
     if (countdownActive && countdownLabel) {
@@ -1696,6 +1999,32 @@
     CTX.restore();
   };
 
+  const showRaceResult = (playerWon, place, total, elapsedMs) => {
+    if (!resultOverlay) return;
+    if (resultTitle) resultTitle.textContent = playerWon ? "You Win!" : "You Lose";
+    if (resultSub) {
+      resultSub.textContent = playerWon
+        ? "You finished the laps first."
+        : "An opponent finished the laps first.";
+    }
+    if (resultPlace && place && total) {
+      resultPlace.textContent = `Place: ${place}/${total}`;
+    }
+    if (resultTime) {
+      resultTime.textContent = `Time: ${fmtTime(elapsedMs || 0)}`;
+    }
+    if (resultBest) {
+      const best = getBestTime();
+      resultBest.textContent = best ? `Best Lap: ${fmtTime(best)}` : "Best Lap: --:--";
+    }
+    resultOverlay.classList.remove("hidden");
+  };
+
+  const hideRaceResult = () => {
+    if (!resultOverlay) return;
+    resultOverlay.classList.add("hidden");
+  };
+
   let lastTime = performance.now();
 
   const loop = (now) => {
@@ -1711,6 +2040,7 @@
         countdownActive = false;
         countdownLabel = "";
         timerStart = now;
+        lapStartTime = now;
       }
     } else {
       countdownLabel = "";
@@ -1794,7 +2124,10 @@
     const btnSingle = document.getElementById("btnSingle");
     const btnBack = document.getElementById("btnBack");
     const btnStart = document.getElementById("btnStart");
+    const btnRestart = document.getElementById("btnRestart");
+    const btnQuit = document.getElementById("btnQuit");
     const selectCar = document.getElementById("selectCar");
+    const selectLaps = document.getElementById("selectLaps");
     const selectMode = document.getElementById("selectMode");
     const selectMap = document.getElementById("selectMap");
 
@@ -1813,6 +2146,12 @@
       opt.textContent = c.label;
       selectCar.appendChild(opt);
     }
+    for (let i = 1; i <= 10; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = String(i);
+      selectLaps.appendChild(opt);
+    }
     for (const m of MODE_OPTIONS) {
       const opt = document.createElement("option");
       opt.value = m.id;
@@ -1829,18 +2168,22 @@
     selectCar.value = gameState.selectedCar.id;
     selectMode.value = gameState.selectedMode.id;
     selectMap.value = gameState.selectedMap.id;
+    selectLaps.value = String(gameState.selectedLaps);
 
     menuOverlay.classList.remove("hidden");
     btnSingle.addEventListener("click", showSingle);
     btnBack.addEventListener("click", showMain);
 
-    btnStart.addEventListener("click", async () => {
+    const startRace = async (useMenuSelection) => {
       updateRotateOverlay();
       if (isPortrait()) return;
       await requestFullscreen();
-      gameState.selectedCar = CAR_OPTIONS.find((c) => c.id === selectCar.value) || CAR_OPTIONS[0];
-      gameState.selectedMode = MODE_OPTIONS.find((m) => m.id === selectMode.value) || MODE_OPTIONS[0];
-      gameState.selectedMap = MAP_OPTIONS.find((m) => m.id === selectMap.value) || MAP_OPTIONS[0];
+      if (useMenuSelection) {
+        gameState.selectedCar = CAR_OPTIONS.find((c) => c.id === selectCar.value) || CAR_OPTIONS[0];
+        gameState.selectedMode = MODE_OPTIONS.find((m) => m.id === selectMode.value) || MODE_OPTIONS[0];
+        gameState.selectedMap = MAP_OPTIONS.find((m) => m.id === selectMap.value) || MAP_OPTIONS[0];
+        gameState.selectedLaps = Math.max(1, parseInt(selectLaps.value, 10) || 3);
+      }
 
       const carImg = await loadImage(gameState.selectedCar.path);
       if (carImg) assets.images.car = carImg;
@@ -1848,6 +2191,7 @@
       selectAICarImages(gameState.selectedCar.id);
 
       await loadTiledMap(gameState.selectedMap.file);
+      raceLaps = gameState.selectedLaps || mapLaps || 3;
       buildTrackSegments();
       initAICars();
       resize();
@@ -1859,12 +2203,25 @@
       respawnToCheckpoint(-1);
       timerStart = null;
       lastElapsed = 0;
+      lapStartTime = null;
+      raceFinished = false;
+      hideRaceResult();
       countdownActive = true;
       countdownStart = performance.now();
       countdownLabel = "3";
       car.speed = 0;
       gameState.started = true;
       menuOverlay.classList.add("hidden");
+    };
+
+    btnStart.addEventListener("click", () => startRace(true));
+    btnRestart?.addEventListener("click", () => startRace(false));
+    btnQuit?.addEventListener("click", () => {
+      gameState.started = false;
+      raceFinished = false;
+      hideRaceResult();
+      showMain();
+      menuOverlay.classList.remove("hidden");
     });
   };
 
